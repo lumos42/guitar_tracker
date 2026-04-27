@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* ── Design tokens ─────────────────────────────────────────── */
+:root {
+  /* Backgrounds — near-black with a warm amber tint */
+  --bg-base:     oklch(0.09 0.006 50);
+  --bg-surface:  oklch(0.13 0.008 50);
+  --bg-elevated: oklch(0.17 0.010 50);
+  --bg-overlay:  oklch(0.22 0.010 50);
+
+  /* Borders */
+  --border-subtle: oklch(0.20 0.008 50 / 1);
+  --border-base:   oklch(0.26 0.010 50 / 1);
+  --border-strong: oklch(0.34 0.012 50 / 1);
+
+  /* Text */
+  --text-primary:   oklch(0.95 0.005 60);
+  --text-secondary: oklch(0.62 0.010 55);
+  --text-tertiary:  oklch(0.42 0.008 50);
+
+  /* Accent — warm guitar-gold */
+  --accent:        oklch(0.80 0.175 72);
+  --accent-dim:    oklch(0.80 0.175 72 / 0.14);
+  --accent-border: oklch(0.80 0.175 72 / 0.28);
+  --accent-hover:  oklch(0.86 0.150 72);
+
+  /* Danger */
+  --danger:        oklch(0.65 0.20 25);
+  --danger-dim:    oklch(0.65 0.20 25 / 0.12);
+
+  /* Typography */
+  --font-display: 'Archivo', system-ui, sans-serif;
+  --font-body:    'Hanken Grotesk', system-ui, sans-serif;
+
+  /* Spacing scale (4pt) */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Motion */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo:  cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast:  150ms;
+  --duration-base:  250ms;
+  --duration-slow:  400ms;
+}
+
+/* ── Reset ─────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  height: 100%;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  margin: 0;
+}
+
+p { margin: 0; }
+
+/* ── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 0; height: 0; }
+
+/* ── Safe area ─────────────────────────────────────────────── */
+.safe-top    { padding-top: max(var(--space-4), env(safe-area-inset-top)); }
+.safe-bottom { padding-bottom: max(var(--space-4), env(safe-area-inset-bottom)); }
+
+/* ── Range input ───────────────────────────────────────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: var(--border-base);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px var(--accent-dim), 0 2px 8px oklch(0 0 0 / 0.4);
+  transition: transform var(--duration-fast) var(--ease-out-quart);
+}
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.15);
+}
+
+/* ── Animations ─────────────────────────────────────────────── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(1);    opacity: 0.6; }
+  100% { transform: scale(1.5);  opacity: 0; }
+}
+
+.animate-fade-up {
+  animation: fade-up var(--duration-slow) var(--ease-out-expo) both;
+}
+
+.animate-fade-in {
+  animation: fade-in var(--duration-base) var(--ease-out-quart) both;
+}
+
+.animate-sheet-up {
+  animation: sheet-up var(--duration-slow) var(--ease-out-expo) both;
+}
+
+.animate-scale-in {
+  animation: scale-in var(--duration-base) var(--ease-out-expo) both;
+}
+
+/* Stagger helpers */
+.delay-50  { animation-delay: 50ms; }
+.delay-100 { animation-delay: 100ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-250 { animation-delay: 250ms; }
+.delay-300 { animation-delay: 300ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
