@@ -1,0 +1,51 @@
+# Traefik static configuration
+# /etc/traefik/traefik.yml
+
+# ── Global ─────────────────────────────────────────────────────────────────────
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+  filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  bufferingSize: 100
+
+# ── API / Dashboard ─────────────────────────────────────────────────────────────
+# Dashboard available at http://<host>:8080/dashboard/
+# Restrict or disable in production.
+api:
+  dashboard: true
+  insecure: true
+
+# ── Entry points ────────────────────────────────────────────────────────────────
+entryPoints:
+  web:
+    address: ":80"
+    # Uncomment to redirect all HTTP → HTTPS once TLS is configured:
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+
+  # websecure:
+  #   address: ":443"
+
+# ── Providers ───────────────────────────────────────────────────────────────────
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+# ── TLS (Let's Encrypt) – uncomment and fill in when you have a real domain ─────
+# certificatesResolvers:
+#   letsencrypt:
+#     acme:
+#       email: you@example.com
+#       storage: /etc/traefik/acme/acme.json
+#       httpChallenge:
+#         entryPoint: web

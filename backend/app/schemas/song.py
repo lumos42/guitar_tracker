@@ -1,5 +1,5 @@
 from pydantic import BaseModel, model_validator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -33,7 +33,9 @@ class SongResponse(BaseModel):
     duration_ms: Optional[int]
     notes: Optional[str]
     download_status: Optional[str] = None
+    download_started_at: Optional[datetime] = None
     audio_url: Optional[str] = None
+    last_accessed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -56,3 +58,27 @@ class SongResponse(BaseModel):
 
 class SongDetailResponse(SongResponse):
     stats: SongStats
+
+
+class DownloadStatusResponse(BaseModel):
+    song_id: int
+    download_status: Optional[str]
+    download_started_at: Optional[datetime]
+    elapsed_seconds: Optional[int]
+
+    model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_song(cls, song: "Song") -> "DownloadStatusResponse":  # type: ignore[name-defined]
+        elapsed: Optional[int] = None
+        if song.download_started_at and song.download_status in ("pending", "downloading"):
+            started = song.download_started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            elapsed = max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+        return cls(
+            song_id=song.id,
+            download_status=song.download_status,
+            download_started_at=song.download_started_at,
+            elapsed_seconds=elapsed,
+        )

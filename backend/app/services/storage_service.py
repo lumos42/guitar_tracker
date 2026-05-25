@@ -24,7 +24,8 @@ def get_file_url(relative_path: str) -> str:
 async def save_file(file: UploadFile, category: str, user_id: int) -> tuple[str, int]:
     """Save an uploaded file. Returns (relative_path, file_size_bytes)."""
     allowed = ALLOWED_MIMES.get(category, set())
-    if file.content_type not in allowed:
+    base_content_type = (file.content_type or "").split(";")[0].strip()
+    if base_content_type not in allowed:
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             f"File type {file.content_type!r} not allowed for {category}",

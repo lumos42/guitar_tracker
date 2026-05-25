@@ -1,4 +1,9 @@
+import base64
+import hashlib
+import hmac
+import json
 import secrets
+import time
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Response, Cookie, HTTPException, status, Request
 from fastapi.responses import RedirectResponse
@@ -13,8 +18,51 @@ from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Simple in-memory state store — replace with Redis for multi-instance deployments
-_pending_states: dict[str, str] = {}
+OAUTH_STATE_COOKIE = "oauth_state"
+_OAUTH_STATE_TTL_SECONDS = 600
+
+
+def _sign_oauth_state(state: str, frontend_url: str) -> str:
+    payload = {
+        "state": state,
+        "frontend_url": frontend_url,
+        "exp": int(time.time()) + _OAUTH_STATE_TTL_SECONDS,
+    }
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode()
+    ).decode()
+    sig = hmac.new(
+        settings.JWT_SECRET_KEY.encode(),
+        body.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{body}.{sig}"
+
+
+def _verify_oauth_state_cookie(cookie_value: str, state: str) -> str | None:
+    try:
+        body, sig = cookie_value.rsplit(".", 1)
+    except ValueError:
+        return None
+    expected = hmac.new(
+        settings.JWT_SECRET_KEY.encode(),
+        body.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(body.encode()))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if payload.get("state") != state:
+        return None
+    if payload.get("exp", 0) < time.time():
+        return None
+    frontend_url = payload.get("frontend_url")
+    if not isinstance(frontend_url, str):
+        return None
+    return frontend_url
 
 
 def _extract_origin(url: str | None) -> str | None:
@@ -31,18 +79,32 @@ async def google_login(request: Request):
     state = secrets.token_urlsafe(16)
     request_origin = _extract_origin(request.headers.get("origin"))
     request_referer = _extract_origin(request.headers.get("referer"))
-    _pending_states[state] = request_origin or request_referer or settings.FRONTEND_URL
+    frontend_url = request_origin or request_referer or settings.FRONTEND_URL
     auth_url = auth_service.build_google_auth_url(state)
-    return RedirectResponse(url=auth_url)
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie(
+        key=OAUTH_STATE_COOKIE,
+        value=_sign_oauth_state(state, frontend_url),
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite="lax",
+        path="/api/v1/auth",
+        max_age=_OAUTH_STATE_TTL_SECONDS,
+    )
+    return response
 
 
 @router.get("/google/callback")
 async def google_callback(
     code: str,
     state: str,
+    oauth_state: str | None = Cookie(default=None, alias=OAUTH_STATE_COOKIE),
     db: AsyncSession = Depends(get_db),
 ):
-    frontend_url = _pending_states.pop(state, None)
+    if not oauth_state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
+
+    frontend_url = _verify_oauth_state_cookie(oauth_state, state)
     if frontend_url is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
 
@@ -55,6 +117,7 @@ async def google_callback(
     await auth_service.save_refresh_token(db, user, refresh_token)
 
     redirect = RedirectResponse(url=f"{frontend_url}/auth/callback?access_token={access_token}")
+    redirect.delete_cookie(OAUTH_STATE_COOKIE, path="/api/v1/auth")
     redirect.set_cookie(
         key="refresh_token",
         value=refresh_token,

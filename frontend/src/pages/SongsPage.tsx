@@ -9,13 +9,27 @@ import { formatDurationMs } from '@/lib/utils'
 import type { SpotifyTrack } from '@/types'
 
 function AddSongModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [manualMode, setManualMode] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({ title: '', artist: '', album: '' })
   const { data: spotifyResults, isLoading: searching } = useSpotifySearch(query)
   const createSong = useCreateSong()
 
+  const handleDuplicate = (detail: unknown) => {
+    if (typeof detail === 'object' && detail && 'existing_song_id' in detail) {
+      const existingSongId = (detail as { existing_song_id: number }).existing_song_id
+      setError('This song is already in your library.')
+      onClose()
+      navigate(`/songs/${existingSongId}`)
+      return
+    }
+    setError('This song is already in your library.')
+  }
+
   const handleSpotifySelect = (track: SpotifyTrack) => {
+    setError(null)
     createSong.mutate(
       {
         title: track.name, artist: track.artist, album: track.album,
@@ -23,13 +37,20 @@ function AddSongModal({ open, onClose }: { open: boolean; onClose: () => void })
         duration_ms: track.duration_ms,
         spotify_track_id: track.id,
       },
-      { onSuccess: onClose }
+      {
+        onSuccess: onClose,
+        onError: (err) => handleDuplicate(err.response?.data?.detail),
+      }
     )
   }
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    createSong.mutate(form, { onSuccess: onClose })
+    setError(null)
+    createSong.mutate(form, {
+      onSuccess: onClose,
+      onError: (err) => handleDuplicate(err.response?.data?.detail),
+    })
   }
 
   const fieldStyle = {
@@ -96,6 +117,12 @@ function AddSongModal({ open, onClose }: { open: boolean; onClose: () => void })
           {spotifyResults && spotifyResults.length === 0 && query.length > 1 && (
             <p className="text-sm text-center py-4" style={{ color: 'var(--text-tertiary)' }}>
               No results for "{query}"
+            </p>
+          )}
+
+          {error && (
+            <p className="text-sm text-center py-2" style={{ color: 'var(--accent)' }}>
+              {error}
             </p>
           )}
 

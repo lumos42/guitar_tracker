@@ -43,6 +43,25 @@ async def test_create_and_list_song(client: AsyncClient, db_session: AsyncSessio
 
 
 @pytest.mark.asyncio
+async def test_create_song_rejects_duplicate_spotify_track(client: AsyncClient, db_session: AsyncSession):
+    _, token = await _create_user(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "title": "Isn't She Lovely",
+        "artist": "Stevie Wonder",
+        "spotify_track_id": "3NlLmKBJozwoi0k03Feb1N",
+    }
+
+    first = await client.post("/api/v1/songs", json=payload, headers=headers)
+    assert first.status_code == 201
+
+    duplicate = await client.post("/api/v1/songs", json=payload, headers=headers)
+    assert duplicate.status_code == 409
+    detail = duplicate.json()["detail"]
+    assert detail["existing_song_id"] == first.json()["id"]
+
+
+@pytest.mark.asyncio
 async def test_delete_song(client: AsyncClient, db_session: AsyncSession):
     _, token = await _create_user(db_session)
     headers = {"Authorization": f"Bearer {token}"}

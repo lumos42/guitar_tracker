@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
-import { Play, Pause, RotateCcw, Repeat2, Gauge } from 'lucide-react'
+import { Play, Pause } from 'lucide-react'
 
 interface SongPlayerProps {
   audioUrl: string
@@ -13,28 +13,44 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-function parseTime(value: string): number | null {
+function formatTimeFromMs(ms: number): string {
+  return formatTime(Math.floor(ms / 1000))
+}
+
+function parseTimeToMs(value: string): number | null {
   const parts = value.split(':')
   if (parts.length === 2) {
     const m = parseInt(parts[0], 10)
-    const s = parseFloat(parts[1])
-    if (!isNaN(m) && !isNaN(s)) return m * 60 + s
+    const s = parseInt(parts[1], 10)
+    if (!isNaN(m) && !isNaN(s)) return m * 60000 + s * 1000
   }
   const raw = parseFloat(value)
-  return isNaN(raw) ? null : raw
+  if (isNaN(raw)) return null
+  return Math.floor(raw) * 1000
 }
 
-export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
+function audioTimeToMs(t: number): number {
+  return Math.round(t * 1000)
+}
+
+function msToAudioTime(ms: number): number {
+  return ms / 1000
+}
+
+export function SongPlayer({ audioUrl }: SongPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [speed, setSpeed] = useState(1.0)
   const [loopEnabled, setLoopEnabled] = useState(false)
-  const [loopStart, setLoopStart] = useState(0)
-  const [loopEnd, setLoopEnd] = useState(0)
+  const [loopStartMs, setLoopStartMs] = useState(0)
+  const [loopEndMs, setLoopEndMs] = useState(0)
   const [loopStartInput, setLoopStartInput] = useState('0:00')
   const [loopEndInput, setLoopEndInput] = useState('0:00')
+  const [loopSetPhase, setLoopSetPhase] = useState<'start' | 'end'>('start')
+
+  const durationMs = audioTimeToMs(duration)
 
   // Apply speed + pitch preservation whenever speed changes
   useEffect(() => {
@@ -56,30 +72,31 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
     if (!audio) return
     setCurrentTime(audio.currentTime)
 
-    if (loopEnabled && audio.currentTime >= loopEnd && loopEnd > loopStart) {
-      audio.currentTime = loopStart
+    if (loopEnabled && loopEndMs > loopStartMs && audioTimeToMs(audio.currentTime) >= loopEndMs) {
+      audio.currentTime = msToAudioTime(loopStartMs)
     }
-  }, [loopEnabled, loopStart, loopEnd])
+  }, [loopEnabled, loopStartMs, loopEndMs])
 
   const handleLoadedMetadata = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
+    const endMs = audioTimeToMs(audio.duration)
     setDuration(audio.duration)
-    setLoopEnd(audio.duration)
-    setLoopEndInput(formatTime(audio.duration))
+    setLoopEndMs(endMs)
+    setLoopEndInput(formatTimeFromMs(endMs))
   }, [])
 
   const handleEnded = useCallback(() => {
     if (loopEnabled) {
       const audio = audioRef.current
       if (audio) {
-        audio.currentTime = loopStart
+        audio.currentTime = msToAudioTime(loopStartMs)
         audio.play()
       }
     } else {
       setIsPlaying(false)
     }
-  }, [loopEnabled, loopStart])
+  }, [loopEnabled, loopStartMs])
 
   const togglePlay = () => {
     const audio = audioRef.current
@@ -104,34 +121,63 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
   const restart = () => {
     const audio = audioRef.current
     if (!audio) return
-    audio.currentTime = loopEnabled ? loopStart : 0
+    audio.currentTime = loopEnabled ? msToAudioTime(loopStartMs) : 0
     if (!isPlaying) {
       audio.play()
       setIsPlaying(true)
     }
   }
 
+  const resetLoopMarkers = () => {
+    const endMs = durationMs > 0 ? durationMs : loopEndMs
+    setLoopStartMs(0)
+    setLoopEndMs(endMs)
+    setLoopStartInput(formatTimeFromMs(0))
+    setLoopEndInput(formatTimeFromMs(endMs))
+    setLoopSetPhase('start')
+  }
+
   const applyLoopStart = () => {
-    const t = parseTime(loopStartInput)
-    if (t !== null && t >= 0 && t < loopEnd) {
-      setLoopStart(t)
-      setLoopStartInput(formatTime(t))
+    const ms = parseTimeToMs(loopStartInput)
+    if (ms !== null && ms >= 0 && ms < loopEndMs) {
+      setLoopStartMs(ms)
+      setLoopStartInput(formatTimeFromMs(ms))
     } else {
-      setLoopStartInput(formatTime(loopStart))
+      setLoopStartInput(formatTimeFromMs(loopStartMs))
     }
   }
 
   const applyLoopEnd = () => {
-    const t = parseTime(loopEndInput)
-    if (t !== null && t > loopStart && t <= duration) {
-      setLoopEnd(t)
-      setLoopEndInput(formatTime(t))
+    const ms = parseTimeToMs(loopEndInput)
+    if (ms !== null && ms > loopStartMs && (durationMs === 0 || ms <= durationMs)) {
+      setLoopEndMs(ms)
+      setLoopEndInput(formatTimeFromMs(ms))
     } else {
-      setLoopEndInput(formatTime(loopEnd))
+      setLoopEndInput(formatTimeFromMs(loopEndMs))
+    }
+  }
+
+  const setLoopFromCurrentTime = () => {
+    const audio = audioRef.current
+    if (!audio) return
+    const ms = audioTimeToMs(audio.currentTime)
+    if (loopSetPhase === 'start') {
+      setLoopStartMs(ms)
+      setLoopStartInput(formatTimeFromMs(ms))
+      setLoopSetPhase('end')
+    } else {
+      if (ms > loopStartMs) {
+        setLoopEndMs(ms)
+        setLoopEndInput(formatTimeFromMs(ms))
+      }
+      setLoopSetPhase('start')
     }
   }
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
+  const loopRangeLeft = durationMs > 0 ? (loopStartMs / durationMs) * 100 : 0
+  const loopRangeWidth = durationMs > 0 ? ((loopEndMs - loopStartMs) / durationMs) * 100 : 0
+  const loopPlayheadLeft = duration > 0 ? (currentTime / duration) * 100 : 0
 
   const surfaceStyle = {
     background: 'var(--bg-surface)',
@@ -151,8 +197,15 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
     fontSize: '13px',
     borderRadius: '10px',
     padding: '6px 10px',
-    width: '72px',
+    width: '100%',
     textAlign: 'center',
+  }
+
+  const ghostButtonStyle: React.CSSProperties = {
+    fontFamily: 'var(--font-display)',
+    background: 'var(--bg-overlay)',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border-subtle)',
   }
 
   return (
@@ -165,22 +218,6 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
         onEnded={handleEnded}
         preload="metadata"
       />
-
-      {/* Header */}
-      <div className="px-4 pt-4 pb-3 flex items-center gap-3">
-        <div
-          className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}
-        >
-          <Gauge size={14} style={{ color: 'var(--accent)' }} />
-        </div>
-        <p
-          className="text-xs font-bold uppercase tracking-[0.08em] flex-1 truncate"
-          style={labelStyle}
-        >
-          Player — {title}
-        </p>
-      </div>
 
       <div className="px-4 pb-4 flex flex-col gap-4">
         {/* Seek bar */}
@@ -214,11 +251,11 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
         <div className="flex items-center justify-center gap-4">
           <button
             onClick={restart}
-            className="w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
-            title="Restart"
+            className="rounded-xl px-3 h-9 flex items-center justify-center transition-all active:scale-95 text-[12px] font-bold uppercase tracking-[0.06em]"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}
+            title="Restart from loop start or beginning"
           >
-            <RotateCcw size={16} />
+            Restart
           </button>
 
           <button
@@ -234,16 +271,17 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
           </button>
 
           <button
-            onClick={() => setLoopEnabled(v => !v)}
-            className="w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95"
+            onClick={() => { setLoopEnabled(v => !v); setLoopSetPhase('start') }}
+            className="rounded-xl px-3 h-9 flex items-center justify-center transition-all active:scale-95 text-[12px] font-bold uppercase tracking-[0.06em]"
             style={{
+              fontFamily: 'var(--font-display)',
               background: loopEnabled ? 'var(--accent-dim)' : 'var(--bg-elevated)',
               color: loopEnabled ? 'var(--accent)' : 'var(--text-secondary)',
               border: loopEnabled ? '1px solid var(--accent-border)' : '1px solid transparent',
             }}
             title={loopEnabled ? 'Disable loop' : 'Enable loop'}
           >
-            <Repeat2 size={16} />
+            Loop
           </button>
         </div>
 
@@ -267,15 +305,15 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
             <div
               className="absolute inset-y-0 left-0 rounded-full"
               style={{
-                width: `${((speed - 0.4) / 0.6) * 100}%`,
+                width: `${((speed - 0.4) / 0.85) * 100}%`,
                 background: 'var(--accent)',
               }}
             />
             <input
               type="range"
               min={0.4}
-              max={1.0}
-              step={0.05}
+              max={1.25}
+              step={0.01}
               value={speed}
               onChange={e => setSpeed(parseFloat(e.target.value))}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
@@ -284,7 +322,7 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
           <div className="flex justify-between">
             <span className="text-[10px]" style={labelStyle}>0.4×</span>
             <div className="flex gap-1.5">
-              {[0.5, 0.6, 0.75, 1.0].map(v => (
+              {[0.5, 0.6, 0.75, 1.0, 1.25].map(v => (
                 <button
                   key={v}
                   onClick={() => setSpeed(v)}
@@ -300,21 +338,32 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
                 </button>
               ))}
             </div>
-            <span className="text-[10px]" style={labelStyle}>1.0×</span>
+            <span className="text-[10px]" style={labelStyle}>1.25×</span>
           </div>
         </div>
 
         {/* Loop section */}
         {loopEnabled && (
           <div
-            className="rounded-xl p-3 flex flex-col gap-3"
+            className="rounded-xl px-3 py-2 flex flex-col gap-2"
             style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-border)' }}
           >
-            <span className="text-[11px] font-bold uppercase tracking-[0.08em]" style={{ ...labelStyle, color: 'var(--accent)' }}>
-              Loop Section
-            </span>
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col gap-1 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em]" style={{ ...labelStyle, color: 'var(--accent)' }}>
+                Loop Section
+              </span>
+              <button
+                onClick={resetLoopMarkers}
+                className="text-[10px] font-bold px-2 py-0.5 rounded-md transition-all active:scale-95"
+                style={ghostButtonStyle}
+                title="Reset loop markers to full track"
+              >
+                Reset loop
+              </button>
+            </div>
+
+            <div className="grid grid-cols-[1fr_auto_1fr_auto] items-end gap-2">
+              <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="text-[10px] font-bold uppercase tracking-[0.06em]" style={labelStyle}>Start</span>
                 <input
                   type="text"
@@ -326,13 +375,13 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
                   style={inputStyle}
                 />
               </div>
-              <div
-                className="flex-shrink-0 text-[11px] font-bold mt-4"
+              <span
+                className="text-[11px] font-bold pb-2"
                 style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}
               >
                 →
-              </div>
-              <div className="flex flex-col gap-1 flex-1">
+              </span>
+              <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="text-[10px] font-bold uppercase tracking-[0.06em]" style={labelStyle}>End</span>
                 <input
                   type="text"
@@ -344,37 +393,28 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
                   style={inputStyle}
                 />
               </div>
-              <div className="flex flex-col gap-1 flex-shrink-0 mt-4">
-                <button
-                  onClick={() => {
-                    const audio = audioRef.current
-                    if (!audio) return
-                    const t = audio.currentTime
-                    setLoopStart(t)
-                    setLoopStartInput(formatTime(t))
-                  }}
-                  className="text-[10px] font-bold px-2 py-1 rounded-lg transition-all"
-                  style={{
-                    fontFamily: 'var(--font-display)',
-                    background: 'var(--accent-dim)',
-                    color: 'var(--accent)',
-                    border: '1px solid var(--accent-border)',
-                  }}
-                  title="Set start to current time"
-                >
-                  Set ↑
-                </button>
-              </div>
+              <button
+                onClick={setLoopFromCurrentTime}
+                className="text-[10px] font-bold px-2 py-1.5 rounded-lg transition-all active:scale-95 whitespace-nowrap"
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  background: 'var(--accent-dim)',
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent-border)',
+                }}
+                title={loopSetPhase === 'start' ? 'Set start to current time' : 'Set end to current time'}
+              >
+                {loopSetPhase === 'start' ? 'Set ↑' : 'Set End'}
+              </button>
             </div>
 
-            {/* Visual loop range on seek bar */}
-            {duration > 0 && (
+            {durationMs > 0 && (
               <div className="relative h-1.5 rounded-full" style={{ background: 'var(--bg-overlay)' }}>
                 <div
                   className="absolute inset-y-0 rounded-full"
                   style={{
-                    left: `${(loopStart / duration) * 100}%`,
-                    width: `${((loopEnd - loopStart) / duration) * 100}%`,
+                    left: `${loopRangeLeft}%`,
+                    width: `${loopRangeWidth}%`,
                     background: 'var(--accent)',
                     opacity: 0.5,
                   }}
@@ -382,15 +422,24 @@ export function SongPlayer({ audioUrl, title }: SongPlayerProps) {
                 <div
                   className="absolute inset-y-0 w-0.5 rounded-full"
                   style={{
-                    left: `${(currentTime / duration) * 100}%`,
+                    left: `${loopPlayheadLeft}%`,
                     background: 'var(--accent)',
                   }}
                 />
               </div>
             )}
-            <p className="text-[10px]" style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
-              Loops {formatTime(loopStart)} → {formatTime(loopEnd)} · tap "Set ↑" at current position to mark start
-            </p>
+
+            {(loopStartMs === loopEndMs || loopStartMs >= loopEndMs) ? (
+              <p className="text-[10px]" style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
+                {loopSetPhase === 'start' ? 'Set ↑ marks start at current position' : 'Set End marks end at current position'}
+              </p>
+            ) : (
+              <p className="text-[10px]" style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
+                {formatTimeFromMs(loopStartMs)} → {formatTimeFromMs(loopEndMs)}
+                {' · '}
+                {loopSetPhase === 'start' ? 'Set ↑ marks start' : 'Set End marks end'}
+              </p>
+            )}
           </div>
         )}
       </div>

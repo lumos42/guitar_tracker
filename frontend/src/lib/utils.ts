@@ -1,5 +1,15 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import type { Song } from '@/types'
+
+export function sortSongsByRecentAccess(songs: Song[]): Song[] {
+  return [...songs].sort((a, b) => {
+    const aAccess = a.last_accessed_at ? parseApiDate(a.last_accessed_at).getTime() : 0
+    const bAccess = b.last_accessed_at ? parseApiDate(b.last_accessed_at).getTime() : 0
+    if (bAccess !== aAccess) return bAccess - aAccess
+    return parseApiDate(b.created_at).getTime() - parseApiDate(a.created_at).getTime()
+  })
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))

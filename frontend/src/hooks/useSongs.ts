@@ -1,11 +1,14 @@
+import { useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { Song, SpotifyTrack, PagedResponse, ChordChart, Recording } from '@/types'
+import { sortSongsByRecentAccess } from '@/lib/utils'
+import type { Song, SpotifyTrack, PagedResponse, ChordChart, Recording, DownloadStatus } from '@/types'
 
 export const songKeys = {
   all: ['songs'] as const,
   list: (q?: string) => [...songKeys.all, 'list', q] as const,
   detail: (id: number) => [...songKeys.all, id] as const,
+  downloadStatus: (id: number) => [...songKeys.detail(id), 'download-status'] as const,
   chordCharts: (id: number) => [...songKeys.detail(id), 'chord-charts'] as const,
   recordings: (id: number) => [...songKeys.detail(id), 'recordings'] as const,
 }
@@ -13,20 +16,40 @@ export const songKeys = {
 export function useSongs(q?: string) {
   return useQuery({
     queryKey: songKeys.list(q),
-    queryFn: () => api.get<PagedResponse<Song>>('/songs', { params: q ? { q } : undefined }).then(r => r.data.items),
+    queryFn: () =>
+      api
+        .get<PagedResponse<Song>>('/songs', { params: { limit: 100, ...(q ? { q } : {}) } })
+        .then((r) => sortSongsByRecentAccess(r.data.items)),
+    refetchOnMount: 'always',
   })
 }
 
 export function useSong(id: number, pollWhileDownloading = false) {
-  return useQuery({
+  const qc = useQueryClient()
+  const didInvalidateList = useRef(false)
+
+  useEffect(() => {
+    didInvalidateList.current = false
+  }, [id])
+
+  const query = useQuery({
     queryKey: songKeys.detail(id),
     queryFn: () => api.get<Song>(`/songs/${id}`).then(r => r.data),
-    refetchInterval: (query) => {
+    refetchInterval: (q) => {
       if (!pollWhileDownloading) return false
-      const status = query.state.data?.download_status
+      const status = q.state.data?.download_status
       return status === 'pending' || status === 'downloading' ? 2000 : false
     },
   })
+
+  useEffect(() => {
+    if (query.data && !didInvalidateList.current) {
+      didInvalidateList.current = true
+      qc.invalidateQueries({ queryKey: songKeys.all })
+    }
+  }, [query.data, qc])
+
+  return query
 }
 
 export function useCreateSong() {
@@ -51,7 +74,47 @@ export function useDownloadSong() {
     mutationFn: (id: number) => api.post<Song>(`/songs/${id}/download`).then(r => r.data),
     onSuccess: (data) => {
       qc.setQueryData(songKeys.detail(data.id), data)
+      // Kick off status polling immediately
+      qc.invalidateQueries({ queryKey: songKeys.downloadStatus(data.id) })
     },
+  })
+}
+
+export const ACTIVE_DOWNLOAD_STATUSES: (string | null)[] = ['pending', 'downloading']
+
+export function useDownloadStatus(songId: number, enabled = true) {
+  const qc = useQueryClient()
+  const query = useQuery({
+    queryKey: songKeys.downloadStatus(songId),
+    queryFn: () =>
+      api.get<DownloadStatus>(`/songs/${songId}/download-status`).then(r => r.data),
+    enabled: enabled && Number.isFinite(songId) && songId > 0,
+    refetchInterval: (q) => {
+      const status = q.state.data?.download_status
+      return ACTIVE_DOWNLOAD_STATUSES.includes(status ?? null) ? 3000 : false
+    },
+  })
+
+  // When download transitions out of an active state, refresh the song detail.
+  // This is done in useEffect (not select) to avoid triggering during render.
+  const status = query.data?.download_status
+  useEffect(() => {
+    if (status != null && !ACTIVE_DOWNLOAD_STATUSES.includes(status)) {
+      qc.invalidateQueries({ queryKey: songKeys.detail(songId) })
+    }
+  }, [status, songId, qc])
+
+  return query
+}
+
+export function useDownloadLog(songId: number, enabled = true) {
+  return useQuery({
+    queryKey: [...songKeys.downloadStatus(songId), 'log'],
+    queryFn: () =>
+      api.get<{ log: string }>(`/songs/${songId}/download-log`).then(r => r.data.log),
+    enabled: enabled && Number.isFinite(songId) && songId > 0,
+    refetchInterval: enabled ? 3000 : false,
+    staleTime: 0,
   })
 }
 

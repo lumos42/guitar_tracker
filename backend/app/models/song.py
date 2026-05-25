@@ -1,4 +1,4 @@
-from sqlalchemy import String, Text, ForeignKey, DateTime, Integer, Index
+from sqlalchemy import String, Text, ForeignKey, DateTime, Integer, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 from datetime import datetime
@@ -8,7 +8,13 @@ from typing import Optional, List
 class Song(Base, TimestampMixin):
     __tablename__ = "songs"
     __table_args__ = (
-        Index("ix_songs_user_spotify", "user_id", "spotify_track_id"),
+        Index(
+            "uq_songs_user_spotify_active",
+            "user_id",
+            "spotify_track_id",
+            unique=True,
+            sqlite_where=text("spotify_track_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -22,7 +28,9 @@ class Song(Base, TimestampMixin):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     download_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    download_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     local_file_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    last_accessed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="songs")
     practice_sessions: Mapped[List["PracticeSession"]] = relationship("PracticeSession", back_populates="song", lazy="select")

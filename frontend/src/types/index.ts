@@ -18,9 +18,18 @@ export interface Song {
   notes: string | null
   spotify_track_id: string | null
   download_status: SongDownloadStatus
+  download_started_at: string | null
   audio_url: string | null
+  last_accessed_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface DownloadStatus {
+  song_id: number
+  download_status: SongDownloadStatus
+  download_started_at: string | null
+  elapsed_seconds: number | null
 }
 
 export interface PracticeSession {

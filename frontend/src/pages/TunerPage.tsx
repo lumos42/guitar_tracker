@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, MicOff, Guitar } from 'lucide-react'
+import { Guitar } from 'lucide-react'
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ function TunerGauge({ cents, color }: { cents: number; color: string }) {
         stroke={color}
         strokeWidth="2.5"
         strokeLinecap="round"
-        style={{ transition: 'x2 0.08s var(--ease-out-quart), y2 0.08s var(--ease-out-quart), stroke 0.2s' }}
+        style={{ transition: 'x2 0.2s ease-out, y2 0.2s ease-out, stroke 0.3s' }}
       />
 
       {/* Pivot dot */}
@@ -208,16 +208,31 @@ export function TunerPage() {
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
   const bufRef = useRef(new Float32Array(2048))
+  // Smoothing state — EMA on raw frequency to kill jitter
+  const smoothedFreqRef = useRef<number>(-1)
+  const frameCountRef = useRef(0)
 
   const analyze = useCallback(() => {
     const analyser = analyserRef.current
     if (!analyser) return
     analyser.getFloatTimeDomainData(bufRef.current)
     const freq = autoCorrelate(bufRef.current, audioCtxRef.current!.sampleRate)
+
     if (freq > 0) {
-      const detected = detectNote(freq)
+      // EMA: α=0.15 → heavy smoothing while still tracking pitch changes
+      smoothedFreqRef.current =
+        smoothedFreqRef.current < 0
+          ? freq
+          : 0.15 * freq + 0.85 * smoothedFreqRef.current
+    }
+
+    // Update React state at ~15 fps (every 4 frames) to reduce jitter
+    frameCountRef.current++
+    if (frameCountRef.current % 4 === 0 && smoothedFreqRef.current > 0) {
+      const detected = detectNote(smoothedFreqRef.current)
       if (detected) setNote(detected)
     }
+
     rafRef.current = requestAnimationFrame(analyze)
   }, [])
 
@@ -247,11 +262,16 @@ export function TunerPage() {
     audioCtxRef.current = null
     analyserRef.current = null
     streamRef.current = null
+    smoothedFreqRef.current = -1
+    frameCountRef.current = 0
     setListening(false)
     setNote(null)
   }
 
-  useEffect(() => () => stopListening(), [])
+  useEffect(() => {
+    startListening()
+    return () => stopListening()
+  }, [])
 
   const displayNote = note
   const centsOff = displayNote?.cents ?? 0
@@ -371,32 +391,14 @@ export function TunerPage() {
             <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
               {permError
                 ? 'Allow microphone access to use the tuner'
-                : 'Tap the button below and play a string'}
+                : 'Play a string to tune'}
             </p>
           </div>
         )}
       </div>
 
-      {/* Mic toggle */}
-      <div className="flex justify-center">
-        <button
-          onClick={listening ? stopListening : startListening}
-          className="flex items-center gap-3 px-8 h-14 rounded-2xl font-bold text-[15px] transition-all active:scale-[0.97]"
-          style={{
-            fontFamily: 'var(--font-display)',
-            background: listening ? 'var(--danger-dim)' : 'var(--accent)',
-            color: listening ? 'var(--danger)' : 'var(--bg-base)',
-            border: `1.5px solid ${listening ? 'var(--danger)' : 'var(--accent-hover)'}`,
-            boxShadow: listening ? 'none' : '0 0 20px var(--accent-dim)',
-          }}
-        >
-          {listening ? <MicOff size={18} /> : <Mic size={18} />}
-          {listening ? 'Stop' : 'Start Tuner'}
-        </button>
-      </div>
-
       {listening && (
-        <p className="text-center text-xs mt-4 animate-fade-in" style={{ color: 'var(--text-tertiary)' }}>
+        <p className="text-center text-xs mt-2 animate-fade-in" style={{ color: 'var(--text-tertiary)' }}>
           Listening · Play a string clearly
         </p>
       )}

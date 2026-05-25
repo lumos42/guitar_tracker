@@ -2,9 +2,32 @@ import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Link2, TrendingUp, Activity } from 'lucide-react'
 import { useExercise, useExerciseBpmLogs, useUpdateExercise } from '@/hooks/useExercises'
+import { useAuthenticatedMediaUrl } from '@/hooks/useAuthenticatedMediaUrl'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatRelative } from '@/lib/utils'
 import { useMetronomeStore } from '@/store/metronomeStore'
+import type { Exercise } from '@/types'
+
+function ExerciseFileMedia({ exercise }: { exercise: Exercise }) {
+  const { data: mediaUrl, isLoading } = useAuthenticatedMediaUrl(exercise.file_url ?? undefined)
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-tertiary)' }}>
+        <Spinner className="w-4 h-4" />
+        Loading media…
+      </div>
+    )
+  }
+
+  if (!mediaUrl) return null
+
+  if (exercise.media_type === 'image') {
+    return <img src={mediaUrl} alt={exercise.name} className="w-full rounded-xl object-cover max-h-72" />
+  }
+
+  return <video src={mediaUrl} controls className="w-full rounded-xl max-h-72" />
+}
 
 export function ExerciseDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -82,10 +105,8 @@ export function ExerciseDetailPage() {
         </h2>
         {!hasMedia ? (
           <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No media attached yet.</p>
-        ) : exercise.media_type === 'image' && exercise.file_url ? (
-          <img src={exercise.file_url} alt={exercise.name} className="w-full rounded-xl object-cover max-h-72" />
-        ) : exercise.media_type === 'video' && exercise.file_url ? (
-          <video src={exercise.file_url} controls className="w-full rounded-xl max-h-72" />
+        ) : (exercise.media_type === 'image' || exercise.media_type === 'video') && exercise.file_url ? (
+          <ExerciseFileMedia exercise={exercise} />
         ) : exercise.media_url ? (
           <a
             href={exercise.media_url}

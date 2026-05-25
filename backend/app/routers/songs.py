@@ -1,23 +1,36 @@
 import asyncio
 import logging
-from pathlib import Path
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, func, and_
-from datetime import datetime, timezone
+import shutil
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.user import User
-from app.models.song import Song
 from app.models.practice_session import PracticeSession
 from app.models.recording import Recording
-from app.schemas.song import SongCreate, SongUpdate, SongResponse, SongDetailResponse, SongStats
+from app.models.song import Song
+from app.models.user import User
+from app.schemas.song import (
+    DownloadStatusResponse,
+    SongCreate,
+    SongDetailResponse,
+    SongResponse,
+    SongStats,
+    SongUpdate,
+)
 from app.utils.pagination import PageResponse
-from app.config import settings
 
 router = APIRouter(prefix="/songs", tags=["songs"])
 logger = logging.getLogger(__name__)
+
+# Maximum time we'll let a download stay "downloading"/"pending" before treating
+# it as a stale lock from a crashed worker and allowing a retry to take over.
+DOWNLOAD_STALE_AFTER = timedelta(minutes=10)
 
 
 @router.get("", response_model=PageResponse[SongResponse])
@@ -37,7 +50,8 @@ async def list_songs(
     total = total_result.scalar_one()
 
     result = await db.execute(
-        select(Song).where(base).order_by(Song.updated_at.desc())
+        select(Song).where(base)
+        .order_by(Song.last_accessed_at.desc().nulls_last(), Song.created_at.desc())
         .offset((page - 1) * limit).limit(limit)
     )
     songs = result.scalars().all()
@@ -50,7 +64,26 @@ async def create_song(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    song = Song(**body.model_dump(), user_id=current_user.id)
+    if body.spotify_track_id:
+        existing = await db.execute(
+            select(Song).where(
+                Song.user_id == current_user.id,
+                Song.spotify_track_id == body.spotify_track_id,
+                Song.deleted_at.is_(None),
+            )
+        )
+        song = existing.scalar_one_or_none()
+        if song:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Song already in your library",
+                    "existing_song_id": song.id,
+                },
+            )
+
+    now = datetime.now(timezone.utc)
+    song = Song(**body.model_dump(), user_id=current_user.id, last_accessed_at=now)
     db.add(song)
     await db.commit()
     await db.refresh(song)
@@ -69,6 +102,10 @@ async def get_song(
     song = result.scalar_one_or_none()
     if not song:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Song not found")
+
+    song.last_accessed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(song)
 
     sessions_q = await db.execute(
         select(func.count()).select_from(PracticeSession).where(
@@ -132,117 +169,97 @@ async def delete_song(
 async def _run_spotdl_download(
     song_id: int,
     user_id: int,
-    spotify_track_id: str,
+    artist: str,
+    title: str,
     session_factory: async_sessionmaker,
 ) -> None:
     """Background task: run spotdl and update song download_status."""
     logger.info(
         "Download task started",
-        extra={
-            "song_id": song_id,
-            "user_id": user_id,
-            "spotify_track_id": spotify_track_id,
-        },
+        extra={"song_id": song_id, "user_id": user_id, "artist": artist, "title": title},
     )
-    output_dir = settings.UPLOAD_DIR / "songs" / str(user_id)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Ensured output directory exists: %s", output_dir)
+    final_dir = settings.UPLOAD_DIR / "songs" / str(user_id)
+    final_dir.mkdir(parents=True, exist_ok=True)
+
+    # Isolated per-song temp directory — spotdl runs here so there is exactly
+    # one mp3 to find; no mtime guessing, no cross-song file collisions.
+    tmp_dir = final_dir / f"tmp_{song_id}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
 
     async def _set_status(db: AsyncSession, s: str, file_path: Optional[str] = None) -> None:
-        logger.info(
-            "Setting song download status",
-            extra={
-                "song_id": song_id,
-                "status": s,
-                "file_path": file_path,
-            },
-        )
         result = await db.execute(select(Song).where(Song.id == song_id))
         song = result.scalar_one_or_none()
         if song:
             song.download_status = s
-            if file_path:
+            if file_path is not None:
                 song.local_file_path = file_path
             await db.commit()
-            logger.info(
-                "Committed song download status update",
-                extra={
-                    "song_id": song_id,
-                    "status": s,
-                    "file_path": file_path,
-                },
-            )
+            logger.info("Song %s download_status → %s", song_id, s)
         else:
-            logger.warning(
-                "Song not found while setting download status",
-                extra={"song_id": song_id, "status": s},
-            )
+            logger.warning("Song %s not found while setting download_status=%s", song_id, s)
 
     async with session_factory() as db:
         await _set_status(db, "downloading")
 
-    query = f"spotify:track:{spotify_track_id}"
-    logger.info(
-        "Launching spotdl process",
-        extra={
-            "song_id": song_id,
-            "query": query,
-            "output_dir": str(output_dir),
-        },
-    )
+    query = f"{artist} - {title}"
+    log_path = final_dir / f"download_{song_id}.log"
+    logger.info("Launching spotdl: %r  tmp_dir=%s  log=%s", query, tmp_dir, log_path)
+
+    cmd = [
+        settings.SPOTDL_PATH,
+        "download",
+        query,
+        "--output", str(tmp_dir),
+        "--format", "mp3",
+        "--bitrate", "128k",
+    ]
+    if settings.SPOTDL_CONFIG:
+        cmd += ["--config"]
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            "spotdl",
-            "download",
-            query,
-            "--output", str(output_dir),
-            "--format", "mp3",
-            "--bitrate", "128k",
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
-        stdout, stderr = await proc.communicate()
-        stdout_text = stdout.decode(errors="replace")
-        stderr_text = stderr.decode(errors="replace")
-        logger.info(
-            "spotdl process completed",
-            extra={
-                "song_id": song_id,
-                "return_code": proc.returncode,
-                "stdout_preview": stdout_text[:1000],
-                "stderr_preview": stderr_text[:1000],
-            },
-        )
+
+        with open(log_path, "w", buffering=1) as log_file:
+            assert proc.stdout is not None
+            async for raw_line in proc.stdout:
+                line = raw_line.decode(errors="replace")
+                log_file.write(line)
+
+        await proc.wait()
+
+        with open(log_path) as lf:
+            captured = lf.read()
+        logger.info("spotdl finished (rc=%s) output_tail=%s", proc.returncode, captured[-800:])
 
         if proc.returncode != 0:
-            raise RuntimeError(stderr_text)
+            raise RuntimeError(f"spotdl exited {proc.returncode}:\n{captured[-2000:]}")
 
-        # Find the most recently created mp3 in the output dir
-        mp3_files = sorted(output_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
-        logger.info(
-            "Scanned output directory for mp3 files",
-            extra={"song_id": song_id, "found_count": len(mp3_files)},
-        )
-        if not mp3_files:
-            raise RuntimeError("spotdl completed but no mp3 file found")
+        tmp_mp3s = list(tmp_dir.glob("*.mp3"))
+        if not tmp_mp3s:
+            raise RuntimeError(
+                f"spotdl completed (rc=0) but no mp3 found in {tmp_dir}.\nOutput:\n{captured[-2000:]}"
+            )
 
-        relative_path = f"songs/{user_id}/{mp3_files[0].name}"
-        logger.info(
-            "Download successful",
-            extra={"song_id": song_id, "relative_path": relative_path},
-        )
+        downloaded = max(tmp_mp3s, key=lambda p: p.stat().st_mtime)
+
+        # Rename to a stable, song-ID-based filename so the mapping is always
+        # unambiguous — even if the same song is re-downloaded later.
+        final_path = final_dir / f"{song_id}.mp3"
+        downloaded.rename(final_path)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        relative_path = f"songs/{user_id}/{song_id}.mp3"
+        logger.info("Download successful: %s", relative_path)
         async with session_factory() as db:
             await _set_status(db, "downloaded", relative_path)
 
     except Exception:
-        logger.exception(
-            "Download task failed",
-            extra={
-                "song_id": song_id,
-                "user_id": user_id,
-                "spotify_track_id": spotify_track_id,
-            },
-        )
+        logger.exception("Download task failed for song %s", song_id)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         async with session_factory() as db:
             await _set_status(db, "failed")
 
@@ -254,59 +271,106 @@ async def download_song(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    logger.info(
-        "Download endpoint called",
-        extra={"song_id": song_id, "user_id": current_user.id},
-    )
+    # Verify the song exists and belongs to the user before attempting to claim
+    # the download lock — gives us a clean 404 vs 409 distinction.
     result = await db.execute(
-        select(Song).where(Song.id == song_id, Song.user_id == current_user.id, Song.deleted_at.is_(None))
+        select(Song).where(
+            Song.id == song_id,
+            Song.user_id == current_user.id,
+            Song.deleted_at.is_(None),
+        )
     )
     song = result.scalar_one_or_none()
     if not song:
-        logger.warning(
-            "Download requested for missing song",
-            extra={"song_id": song_id, "user_id": current_user.id},
-        )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Song not found")
 
-    if not song.spotify_track_id:
-        logger.warning(
-            "Download requested for song without spotify_track_id",
-            extra={"song_id": song_id, "user_id": current_user.id},
-        )
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Song has no Spotify track ID")
+    # Atomic claim: only flip to "pending" if no other worker has an active lock,
+    # OR the existing lock is stale (orphaned by a crashed worker). With multiple
+    # gunicorn workers a non-atomic SELECT-then-UPDATE will spawn duplicate spotdl
+    # processes, which then race on the same yt-dlp URLs and fail.
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - DOWNLOAD_STALE_AFTER
 
-    if song.download_status in ("downloading", "pending"):
+    claim = await db.execute(
+        update(Song)
+        .where(
+            Song.id == song_id,
+            Song.user_id == current_user.id,
+            Song.deleted_at.is_(None),
+            or_(
+                Song.download_status.is_(None),
+                Song.download_status.notin_(["pending", "downloading"]),
+                Song.download_started_at.is_(None),
+                Song.download_started_at < stale_cutoff,
+            ),
+        )
+        .values(download_status="pending", download_started_at=now, local_file_path=None)
+    )
+    await db.commit()
+
+    if claim.rowcount == 0:
+        # Another worker already owns an active, non-stale lock. Return current
+        # state without spawning a duplicate spotdl.
+        await db.refresh(song)
         logger.info(
-            "Download already in progress, returning existing song state",
-            extra={
-                "song_id": song_id,
-                "user_id": current_user.id,
-                "download_status": song.download_status,
-            },
+            "Download already in progress for song %s (status=%s, started_at=%s)",
+            song_id,
+            song.download_status,
+            song.download_started_at,
         )
         return song
 
-    song.download_status = "pending"
-    await db.commit()
     await db.refresh(song)
     logger.info(
-        "Marked song download as pending",
-        extra={"song_id": song_id, "user_id": current_user.id},
+        "Claimed download for song %s (%s - %s)", song_id, song.artist, song.title
     )
 
     from app.database import get_session_factory  # noqa: PLC0415
+
     sf = get_session_factory()
     background_tasks.add_task(
         _run_spotdl_download,
         song_id=song.id,
         user_id=current_user.id,
-        spotify_track_id=song.spotify_track_id,
+        artist=song.artist,
+        title=song.title,
         session_factory=sf,
     )
-    logger.info(
-        "Queued background download task",
-        extra={"song_id": song.id, "user_id": current_user.id},
-    )
-
     return song
+
+
+@router.get("/{song_id}/download-status", response_model=DownloadStatusResponse)
+async def get_download_status(
+    song_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Song).where(Song.id == song_id, Song.user_id == current_user.id, Song.deleted_at.is_(None))
+    )
+    song = result.scalar_one_or_none()
+    if not song:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Song not found")
+    return DownloadStatusResponse.from_song(song)
+
+
+@router.get("/{song_id}/download-log")
+async def get_download_log(
+    song_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Song).where(Song.id == song_id, Song.user_id == current_user.id, Song.deleted_at.is_(None))
+    )
+    song = result.scalar_one_or_none()
+    if not song:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Song not found")
+
+    log_path = settings.UPLOAD_DIR / "songs" / str(current_user.id) / f"download_{song_id}.log"
+    if not log_path.exists():
+        return {"log": ""}
+
+    text = log_path.read_text(errors="replace")
+    # Return last 8 KB to keep it snappy
+    return {"log": text[-8192:]}

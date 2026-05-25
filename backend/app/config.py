@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+    GOOGLE_REDIRECT_URI: str = "http://localhost:9000/api/v1/auth/google/callback"
 
     # Spotify
     SPOTIFY_CLIENT_ID: str = ""
@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # File storage
     UPLOAD_DIR: Path = Path("/var/www/guitar_tracker/uploads")
     MAX_FILE_SIZE_MB: int = 200
+
+    # spotdl
+    SPOTDL_PATH: str = "spotdl"
+    SPOTDL_CONFIG: str = ""  # e.g. /home/user/.config/spotdl/config.json
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]

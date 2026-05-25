@@ -1,0 +1,37 @@
+[Unit]
+Description=Traefik – reverse proxy for Guitar Tracker
+Documentation=https://doc.traefik.io/traefik/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=traefik
+Group=traefik
+
+# Allow binding to port 80 and 443 without root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+ExecStart=/usr/local/bin/traefik --configFile=/etc/traefik/traefik.yml
+
+# Traefik supports graceful hot-reload via SIGUSR1
+ExecReload=/bin/kill -s USR1 $MAINPID
+
+KillMode=mixed
+TimeoutStopSec=10
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/traefik /etc/traefik/acme
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

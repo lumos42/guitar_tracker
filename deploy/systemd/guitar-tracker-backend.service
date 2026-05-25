@@ -1,0 +1,50 @@
+[Unit]
+Description=Guitar Tracker – FastAPI backend (gunicorn + uvicorn workers)
+Documentation=https://github.com/benoitc/gunicorn
+After=network.target
+Wants=network.target
+
+[Service]
+Type=exec
+User=shubham
+Group=shubham
+WorkingDirectory=/home/shubham/projects/guitar_tracker/backend
+
+# Activate the virtualenv by putting its bin/ first on PATH
+Environment="PATH=/home/shubham/projects/guitar_tracker/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Load application secrets / settings from the production .env
+EnvironmentFile=/home/shubham/projects/guitar_tracker/backend/.env
+
+ExecStart=/home/shubham/projects/guitar_tracker/backend/.venv/bin/gunicorn \
+    app.main:app \
+    --workers 4 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:9000 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --access-logfile /var/log/guitar-tracker/backend-access.log \
+    --error-logfile /var/log/guitar-tracker/backend-error.log \
+    --log-level info
+
+# Gracefully reload workers on SIGHUP (used by ExecReload)
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Ensure the log dir exists before starting
+ExecStartPre=/bin/mkdir -p /var/log/guitar-tracker
+
+KillMode=mixed
+TimeoutStopSec=10
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Hardening
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -4,7 +4,7 @@ import { Music2, Dumbbell, BookMarked, Home, Gauge } from 'lucide-react'
 const links = [
   { to: '/',           label: 'Home',     icon: Home },
   { to: '/songs',      label: 'Songs',    icon: Music2 },
-  { to: '/exercises',  label: 'Practice', icon: Dumbbell },
+  { to: '/exercises',  label: 'Exercises', icon: Dumbbell },
   { to: '/tuner',      label: 'Tuner',    icon: Gauge },
   { to: '/bookmarks',  label: 'Learn',    icon: BookMarked },
 ]

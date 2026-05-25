@@ -1,0 +1,32 @@
+# Guitar Tracker – Traefik dynamic config
+# Domain: guitar.lanomilano.com
+# Drop at: /data/coolify/proxy/dynamic/guitar-tracker.yml
+
+http:
+  routers:
+    guitar-tracker-api:
+      rule: "Host(`guitar.lanomilano.com`) && PathPrefix(`/api`)"
+      entryPoints: ["http", "https"]
+      service: guitar-tracker-backend
+      priority: 100
+      tls: {}
+
+    guitar-tracker-frontend:
+      rule: "Host(`guitar.lanomilano.com`)"
+      entryPoints: ["http", "https"]
+      service: guitar-tracker-frontend
+      priority: 10
+      tls: {}
+
+  services:
+    guitar-tracker-backend:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://10.0.0.1:9000"
+
+    guitar-tracker-frontend:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://10.0.0.1:3000"

@@ -1,0 +1,34 @@
+[Unit]
+Description=Guitar Tracker – Frontend static file server (serve)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=shubham
+Group=shubham
+WorkingDirectory=/home/shubham/projects/guitar_tracker/frontend
+
+# `serve -s` enables SPA mode: any unknown path returns index.html
+# so React Router client-side routing works correctly.
+ExecStart=/usr/bin/serve dist \
+    --listen tcp://0.0.0.0:3000 \
+    --single \
+    --no-clipboard
+
+ExecStartPre=/bin/test -d /home/shubham/projects/guitar_tracker/frontend/dist
+
+KillMode=process
+TimeoutStopSec=5
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Hardening
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

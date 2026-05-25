@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { Play, Clock, Music2, ChevronRight } from 'lucide-react'
+import { Play, Clock, Music2, ChevronRight, LogOut } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { usePracticeSessions } from '@/hooks/usePractice'
 import { useSongs } from '@/hooks/useSongs'
@@ -8,6 +8,7 @@ import { formatRelative, formatDuration } from '@/lib/utils'
 
 export function HomePage() {
   const user = useAuthStore((s) => s.user)
+  const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
   const { data: sessions, isLoading } = usePracticeSessions()
   const { data: songs } = useSongs()
@@ -275,6 +276,23 @@ export function HomePage() {
             })}
           </div>
         )}
+      </div>
+
+      {/* Logout */}
+      <div className="px-5 mt-8 mb-4 animate-fade-up delay-200">
+        <button
+          onClick={logout}
+          className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl text-sm font-semibold transition-all duration-150 active:scale-[0.98]"
+          style={{
+            fontFamily: 'var(--font-display)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-tertiary)',
+          }}
+        >
+          <LogOut size={15} strokeWidth={2} />
+          Sign out
+        </button>
       </div>
     </div>
   )
