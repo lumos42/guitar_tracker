@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Minus, Plus, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { useMetronomeStore } from '@/store/metronomeStore'
 import { useLogBpm } from '@/hooks/useExercises'
+import { useTapTempo } from '@/hooks/useTapTempo'
+import { MetronomeDial } from '@/components/MetronomeDial'
+import { BPM_MIN, BPM_MAX } from '@/lib/metronomeDial'
 
 function MetronomeIcon({ size = 20, strokeWidth = 1.8, className = '' }: { size?: number; strokeWidth?: number; className?: string }) {
   return (
@@ -27,6 +30,8 @@ export function FloatingMetronome() {
   const setBpm = useMetronomeStore((s) => s.setBpm)
   const setBeatsPerBar = useMetronomeStore((s) => s.setBeatsPerBar)
   const logBpm = useLogBpm()
+
+  const { onTap, tapCount, isTapping } = useTapTempo(setBpm, BPM_MIN, BPM_MAX)
 
   const isPlayingRef = useRef(false)
   const bpmRef = useRef(120)
@@ -138,7 +143,7 @@ export function FloatingMetronome() {
     didLongPressRef.current = false
   }
 
-  const clamp = (v: number) => Math.max(40, Math.min(250, v))
+  const tapHint = tapCount < 2 ? 'Tap again' : null
 
   return (
     <div
@@ -147,15 +152,16 @@ export function FloatingMetronome() {
     >
       {expanded && (
         <div
-          className="mb-3 p-4 rounded-2xl animate-scale-in"
+          className="mb-3 rounded-2xl animate-scale-in flex flex-col items-center"
           style={{
             background: 'oklch(0.14 0.008 50)',
             border: '1px solid var(--border-base)',
             boxShadow: '0 8px 40px oklch(0 0 0 / 0.55)',
-            width: '196px',
+            width: '272px',
+            padding: 'var(--space-4)',
           }}
         >
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between w-full mb-3">
             <span
               className="text-[11px] font-bold uppercase tracking-[0.08em]"
               style={{ fontFamily: 'var(--font-display)', color: 'var(--text-tertiary)' }}
@@ -166,13 +172,14 @@ export function FloatingMetronome() {
               onClick={() => setExpanded(false)}
               className="w-6 h-6 flex items-center justify-center rounded-lg transition-colors"
               style={{ color: 'var(--text-tertiary)' }}
+              aria-label="Close metronome"
             >
               <X size={14} />
             </button>
           </div>
 
           {/* Beat dots */}
-          <div className="flex gap-2 justify-center mb-4">
+          <div className="flex gap-2 justify-center mb-3">
             {Array.from({ length: beatsPerBar }).map((_, i) => (
               <div
                 key={i}
@@ -188,49 +195,41 @@ export function FloatingMetronome() {
             ))}
           </div>
 
-          {/* BPM control */}
-          <div className="flex items-center gap-2 mb-3">
-            <button
-              onClick={() => setBpm(clamp(bpm - 5))}
-              className="w-9 h-9 rounded-xl flex items-center justify-center active:scale-[0.93] transition-transform"
-              style={{ background: 'var(--bg-overlay)', border: '1px solid var(--border-base)', color: 'var(--text-primary)' }}
+          {/* BPM readout */}
+          <div className="text-center mb-2">
+            <p
+              className="text-3xl font-black tabular-nums leading-none"
+              style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
             >
-              <Minus size={14} />
-            </button>
-            <div className="flex-1 text-center">
-              <p
-                className="text-3xl font-black tabular-nums leading-none"
-                style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
-              >
-                {bpm}
-              </p>
-              <p
-                className="text-[10px] uppercase tracking-widest mt-0.5"
-                style={{ fontFamily: 'var(--font-display)', color: 'var(--text-tertiary)' }}
-              >
-                bpm
-              </p>
-            </div>
-            <button
-              onClick={() => setBpm(clamp(bpm + 5))}
-              className="w-9 h-9 rounded-xl flex items-center justify-center active:scale-[0.93] transition-transform"
-              style={{ background: 'var(--bg-overlay)', border: '1px solid var(--border-base)', color: 'var(--text-primary)' }}
+              {bpm}
+            </p>
+            <p
+              className="text-[10px] uppercase tracking-widest mt-0.5"
+              style={{ fontFamily: 'var(--font-display)', color: 'var(--text-tertiary)' }}
             >
-              <Plus size={14} />
-            </button>
+              bpm
+            </p>
           </div>
 
-          <input
-            type="range"
-            min={40}
-            max={250}
-            value={bpm}
-            onChange={(e) => setBpm(Number(e.target.value))}
-            className="w-full mb-3"
-          />
+          <MetronomeDial bpm={bpm} onBpmChange={setBpm} />
+
+          <button
+            type="button"
+            onClick={onTap}
+            className="w-full h-10 rounded-xl text-[11px] font-bold uppercase tracking-[0.1em] mt-3 active:scale-[0.97] transition-transform"
+            style={{
+              fontFamily: 'var(--font-display)',
+              background: isTapping ? 'var(--accent-dim)' : 'var(--bg-overlay)',
+              color: isTapping ? 'var(--accent)' : 'var(--text-secondary)',
+              border: `1px solid ${isTapping ? 'var(--accent-border)' : 'var(--border-base)'}`,
+            }}
+            aria-label={tapHint ? 'Tap tempo — tap again to set' : 'Tap tempo'}
+          >
+            {tapHint ?? 'Tap'}
+          </button>
 
           {/* Time signature */}
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 w-full mt-3">
             {TIME_SIGS.map((sig) => (
               <button
                 key={sig}

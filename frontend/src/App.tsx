@@ -13,6 +13,7 @@ import { ExercisesPage } from '@/pages/ExercisesPage'
 import { ExerciseDetailPage } from '@/pages/ExerciseDetailPage'
 import { BookmarksPage } from '@/pages/BookmarksPage'
 import { TunerPage } from '@/pages/TunerPage'
+import { HelpPage } from '@/pages/HelpPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.accessToken)
@@ -27,6 +28,14 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route
+            path="/help"
+            element={
+              <RequireAuth>
+                <HelpPage />
+              </RequireAuth>
+            }
+          />
           <Route
             element={
               <RequireAuth>

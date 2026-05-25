@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isAxiosError } from 'axios'
 import { Plus, Search, Music2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useSongs, useCreateSong, useSpotifySearch } from '@/hooks/useSongs'
@@ -39,7 +40,7 @@ function AddSongModal({ open, onClose }: { open: boolean; onClose: () => void })
       },
       {
         onSuccess: onClose,
-        onError: (err) => handleDuplicate(err.response?.data?.detail),
+        onError: (err) => handleDuplicate(isAxiosError(err) ? err.response?.data?.detail : undefined),
       }
     )
   }
@@ -49,7 +50,7 @@ function AddSongModal({ open, onClose }: { open: boolean; onClose: () => void })
     setError(null)
     createSong.mutate(form, {
       onSuccess: onClose,
-      onError: (err) => handleDuplicate(err.response?.data?.detail),
+      onError: (err) => handleDuplicate(isAxiosError(err) ? err.response?.data?.detail : undefined),
     })
   }
 

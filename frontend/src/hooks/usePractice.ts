@@ -4,15 +4,24 @@ import type { PracticeSession, PagedResponse } from '@/types'
 
 export const practiceKeys = {
   all: ['practice'] as const,
-  list: (songId?: number) => [...practiceKeys.all, 'list', songId] as const,
+  list: (songId?: number, limit?: number) => [...practiceKeys.all, 'list', songId, limit] as const,
   detail: (id: number) => [...practiceKeys.all, id] as const,
 }
 
-export function usePracticeSessions(songId?: number) {
+export function usePracticeSessions(options?: { songId?: number; limit?: number }) {
+  const songId = options?.songId
+  const limit = options?.limit
   return useQuery({
-    queryKey: practiceKeys.list(songId),
+    queryKey: practiceKeys.list(songId, limit),
     queryFn: () =>
-      api.get<PagedResponse<PracticeSession>>('/practice-sessions', { params: songId ? { song_id: songId } : undefined }).then(r => r.data.items),
+      api
+        .get<PagedResponse<PracticeSession>>('/practice-sessions', {
+          params: {
+            ...(songId ? { song_id: songId } : {}),
+            ...(limit != null ? { limit } : {}),
+          },
+        })
+        .then((r) => r.data.items),
   })
 }
 

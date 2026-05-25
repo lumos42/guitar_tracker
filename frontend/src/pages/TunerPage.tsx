@@ -21,6 +21,17 @@ const R_ARC = 120
 const R_NEEDLE = 105
 const ARC_HALF_DEG = 70  // ±70° from straight-up = 140° total span
 
+// Pitch stability tuning
+const PITCH_GATE_RMS = 0.0035   // attempt pitch detection (soft plucks)
+const DISPLAY_GATE_RMS = 0.0035 // show / update note UI
+const SILENCE_CLEAR_RMS = 0.0025 // clear display only when very quiet
+const STABLE_TICKS = 4          // ~330 ms to lock at 60 fps / 5-frame UI ticks
+const HYSTERESIS_CENTS = 32
+const UI_FRAME_INTERVAL = 5
+const EMA_NORMAL = 0.15
+const EMA_ATTACK = 0.10
+const ATTACK_DURATION_MS = 120
+
 // ── Helpers ───────────────────────────────────────────────────
 
 function midiToFreq(midi: number) {
@@ -39,12 +50,17 @@ function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: nu
   return `M ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)}`
 }
 
-function autoCorrelate(buf: Float32Array, sampleRate: number): number {
+interface PitchResult {
+  freq: number
+  rms: number
+}
+
+function analyzePitch(buf: Float32Array, sampleRate: number): PitchResult {
   const SIZE = buf.length
   let rms = 0
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i]
   rms = Math.sqrt(rms / SIZE)
-  if (rms < 0.008) return -1
+  if (rms < PITCH_GATE_RMS) return { freq: -1, rms }
 
   let r1 = 0, r2 = SIZE - 1
   for (let i = 0; i < SIZE / 2; i++) {
@@ -67,7 +83,7 @@ function autoCorrelate(buf: Float32Array, sampleRate: number): number {
   for (let i = d; i < n; i++) {
     if (c[i] > maxVal) { maxVal = c[i]; maxPos = i }
   }
-  if (maxPos <= 0) return -1
+  if (maxPos <= 0) return { freq: -1, rms }
 
   let T0 = maxPos
   const x1 = c[T0 - 1] ?? c[T0]
@@ -77,7 +93,37 @@ function autoCorrelate(buf: Float32Array, sampleRate: number): number {
   const b = (x3 - x1) / 2
   if (a) T0 = T0 - b / (2 * a)
 
-  return sampleRate / T0
+  return { freq: sampleRate / T0, rms }
+}
+
+function noteNumFloatFromFreq(freq: number): number {
+  return 12 * Math.log2(freq / 440) + 69
+}
+
+/** If pitch looks like the 2nd harmonic of a guitar string, fold down one octave. */
+function correctOctaveHarmonic(freq: number): number {
+  for (const s of GUITAR_STRINGS) {
+    const fundamental = midiToFreq(s.midi)
+    const ratio = freq / fundamental
+    if (ratio > 1.85 && ratio < 2.15) return freq / 2
+  }
+  return freq
+}
+
+function isNewPluck(rms: number, lastRms: number): boolean {
+  const fromSilence = lastRms < 0.006 && rms >= DISPLAY_GATE_RMS * 1.15
+  const jump = lastRms >= PITCH_GATE_RMS && rms >= lastRms * 1.6
+  return fromSilence || jump
+}
+
+function hysteresisAllowsSwitch(
+  lockedMidi: number,
+  candidateMidi: number,
+  noteNumFloat: number,
+): boolean {
+  if (candidateMidi === lockedMidi) return true
+  const distFromLocked = Math.abs((noteNumFloat - lockedMidi) * 100)
+  return distFromLocked >= HYSTERESIS_CENTS
 }
 
 interface DetectedNote {
@@ -88,10 +134,10 @@ interface DetectedNote {
   cents: number
 }
 
-function detectNote(freq: number): DetectedNote | null {
+function detectNote(freq: number, referenceMidi?: number): DetectedNote | null {
   if (freq < 60 || freq > 1400) return null
-  const noteNumFloat = 12 * Math.log2(freq / 440) + 69
-  const midi = Math.round(noteNumFloat)
+  const noteNumFloat = noteNumFloatFromFreq(freq)
+  const midi = referenceMidi ?? Math.round(noteNumFloat)
   const cents = (noteNumFloat - midi) * 100
   const noteName = NOTE_NAMES[((midi % 12) + 12) % 12]
   const octave = Math.floor(midi / 12) - 1
@@ -208,29 +254,86 @@ export function TunerPage() {
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
   const bufRef = useRef(new Float32Array(2048))
-  // Smoothing state — EMA on raw frequency to kill jitter
   const smoothedFreqRef = useRef<number>(-1)
   const frameCountRef = useRef(0)
+  const lockedNoteRef = useRef<DetectedNote | null>(null)
+  const stableCountRef = useRef(0)
+  const candidateMidiRef = useRef(-1)
+  const lastRmsRef = useRef(0)
+  const attackUntilRef = useRef(0)
 
   const analyze = useCallback(() => {
     const analyser = analyserRef.current
-    if (!analyser) return
-    analyser.getFloatTimeDomainData(bufRef.current)
-    const freq = autoCorrelate(bufRef.current, audioCtxRef.current!.sampleRate)
+    const ctx = audioCtxRef.current
+    if (!analyser || !ctx) return
 
-    if (freq > 0) {
-      // EMA: α=0.15 → heavy smoothing while still tracking pitch changes
+    analyser.getFloatTimeDomainData(bufRef.current)
+    const { freq: rawFreq, rms } = analyzePitch(bufRef.current, ctx.sampleRate)
+
+    if (isNewPluck(rms, lastRmsRef.current)) {
+      stableCountRef.current = 0
+      candidateMidiRef.current = -1
+      attackUntilRef.current = performance.now() + ATTACK_DURATION_MS
+      if (rawFreq > 0) {
+        smoothedFreqRef.current = correctOctaveHarmonic(rawFreq)
+      }
+    }
+    lastRmsRef.current = rms
+
+    if (rawFreq > 0) {
+      const corrected = correctOctaveHarmonic(rawFreq)
+      const alpha = performance.now() < attackUntilRef.current ? EMA_ATTACK : EMA_NORMAL
       smoothedFreqRef.current =
         smoothedFreqRef.current < 0
-          ? freq
-          : 0.15 * freq + 0.85 * smoothedFreqRef.current
+          ? corrected
+          : alpha * corrected + (1 - alpha) * smoothedFreqRef.current
     }
 
-    // Update React state at ~15 fps (every 4 frames) to reduce jitter
     frameCountRef.current++
-    if (frameCountRef.current % 4 === 0 && smoothedFreqRef.current > 0) {
-      const detected = detectNote(smoothedFreqRef.current)
-      if (detected) setNote(detected)
+    const uiTick = frameCountRef.current % UI_FRAME_INTERVAL === 0
+
+    if (uiTick && rms < SILENCE_CLEAR_RMS) {
+      smoothedFreqRef.current = -1
+      stableCountRef.current = 0
+      candidateMidiRef.current = -1
+      if (lockedNoteRef.current !== null) {
+        lockedNoteRef.current = null
+        setNote(null)
+      }
+    } else if (uiTick && smoothedFreqRef.current > 0 && rms >= DISPLAY_GATE_RMS) {
+      const noteNumFloat = noteNumFloatFromFreq(smoothedFreqRef.current)
+      const candidateMidi = Math.round(noteNumFloat)
+
+      if (candidateMidi === candidateMidiRef.current) {
+        stableCountRef.current++
+      } else {
+        candidateMidiRef.current = candidateMidi
+        stableCountRef.current = 1
+      }
+
+      const locked = lockedNoteRef.current
+      let nextLocked = locked
+
+      if (!locked) {
+        if (stableCountRef.current >= STABLE_TICKS) {
+          nextLocked = detectNote(smoothedFreqRef.current, candidateMidi)
+        }
+      } else if (
+        candidateMidi !== locked.midi &&
+        stableCountRef.current >= STABLE_TICKS &&
+        hysteresisAllowsSwitch(locked.midi, candidateMidi, noteNumFloat)
+      ) {
+        nextLocked = detectNote(smoothedFreqRef.current, candidateMidi)
+      }
+
+      if (nextLocked) {
+        lockedNoteRef.current = nextLocked
+        const display = detectNote(smoothedFreqRef.current, nextLocked.midi)
+        if (display) setNote(display)
+      } else if (locked) {
+        const display = detectNote(smoothedFreqRef.current, locked.midi)
+        if (display) setNote(display)
+      }
     }
 
     rafRef.current = requestAnimationFrame(analyze)
@@ -264,6 +367,11 @@ export function TunerPage() {
     streamRef.current = null
     smoothedFreqRef.current = -1
     frameCountRef.current = 0
+    lockedNoteRef.current = null
+    stableCountRef.current = 0
+    candidateMidiRef.current = -1
+    lastRmsRef.current = 0
+    attackUntilRef.current = 0
     setListening(false)
     setNote(null)
   }

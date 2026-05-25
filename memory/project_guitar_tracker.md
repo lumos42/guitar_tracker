@@ -24,7 +24,8 @@ Backend is complete (9/9 tests pass). Frontend scaffold and full UI implemented.
 ### Pages built
 - `/login` — Google OAuth CTA
 - `/auth/callback` — token exchange
-- `/` — Home (hero with last-practiced song, stats, recent sessions)
+- `/` — Home (last-practiced hero, random song/exercise nudges, help link)
+- `/help` — Help stub (opens in new tab from home; full design TBD)
 - `/songs` — list with Spotify search add flow
 - `/songs/:id` — song detail with sessions + stats, song notes editor, chord chart uploads, and in-page audio recording
 - `/sessions/:id` — session detail with recordings
