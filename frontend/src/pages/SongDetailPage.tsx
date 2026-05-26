@@ -359,9 +359,9 @@ export function SongDetailPage() {
   }
 
   return (
-    <div className="animate-fade-up">
+    <div className="animate-fade-up overflow-x-hidden">
       {/* ── Hero ── */}
-      <div className="relative">
+      <div className="relative overflow-hidden">
         {song.album_art_url ? (
           <img
             src={song.album_art_url}
@@ -381,34 +381,34 @@ export function SongDetailPage() {
           style={{ background: 'linear-gradient(to bottom, oklch(0.09 0.006 50 / 0.4), var(--bg-base))' }}
         />
 
-        <div className="relative z-10 px-5 pt-14 pb-6">
+        <div className="relative z-10 px-5 pt-14 pb-4">
           <button
             onClick={() => navigate(-1)}
-            className="flex items-center gap-2 mb-8 transition-colors"
+            className="flex items-center gap-2 mb-5 transition-colors"
             style={{ color: 'var(--text-secondary)' }}
           >
             <ArrowLeft size={18} />
             <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-display)' }}>Songs</span>
           </button>
 
-          <div className="flex items-end gap-5">
+          <div className="flex items-end gap-4">
             {song.album_art_url ? (
               <img
                 src={song.album_art_url}
                 alt={song.title}
-                className="w-24 h-24 rounded-2xl object-cover shadow-2xl flex-shrink-0"
+                className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover shadow-2xl flex-shrink-0"
               />
             ) : (
               <div
-                className="w-24 h-24 rounded-2xl flex-shrink-0 flex items-center justify-center"
+                className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl flex-shrink-0 flex items-center justify-center"
                 style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
               >
-                <Music2 size={32} style={{ color: 'var(--text-tertiary)' }} strokeWidth={1.5} />
+                <Music2 size={28} style={{ color: 'var(--text-tertiary)' }} strokeWidth={1.5} />
               </div>
             )}
             <div className="flex-1 min-w-0 pb-1">
               <h1
-                className="text-2xl font-black leading-tight"
+                className="text-xl sm:text-2xl font-black leading-tight"
                 style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
               >
                 {song.title}
@@ -422,7 +422,7 @@ export function SongDetailPage() {
         </div>
       </div>
 
-      <div className="px-5 pb-24 flex flex-col gap-5">
+      <div className="px-5 flex flex-col gap-4">
 
         {/* ── Record CTA ── */}
         {isRecording ? (
@@ -507,7 +507,7 @@ export function SongDetailPage() {
                       fontFamily: 'monospace',
                     }}
                   >
-                    {downloadLog || 'Waiting for spotdl output…'}
+                    {downloadLog || 'Waiting for yt-dlp output…'}
                   </pre>
                 )}
               </div>

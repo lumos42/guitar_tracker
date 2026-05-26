@@ -23,6 +23,7 @@ from app.schemas.song import (
     SongStats,
     SongUpdate,
 )
+from app.services.ytdlp_service import download_mp3_from_search
 from app.utils.pagination import PageResponse
 
 router = APIRouter(prefix="/songs", tags=["songs"])
@@ -166,14 +167,14 @@ async def delete_song(
     await db.commit()
 
 
-async def _run_spotdl_download(
+async def _run_ytdlp_download(
     song_id: int,
     user_id: int,
     artist: str,
     title: str,
     session_factory: async_sessionmaker,
 ) -> None:
-    """Background task: run spotdl and update song download_status."""
+    """Background task: yt-dlp search + MP3 download, then update song download_status."""
     logger.info(
         "Download task started",
         extra={"song_id": song_id, "user_id": user_id, "artist": artist, "title": title},
@@ -181,8 +182,6 @@ async def _run_spotdl_download(
     final_dir = settings.UPLOAD_DIR / "songs" / str(user_id)
     final_dir.mkdir(parents=True, exist_ok=True)
 
-    # Isolated per-song temp directory — spotdl runs here so there is exactly
-    # one mp3 to find; no mtime guessing, no cross-song file collisions.
     tmp_dir = final_dir / f"tmp_{song_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,51 +202,24 @@ async def _run_spotdl_download(
 
     query = f"{artist} - {title}"
     log_path = final_dir / f"download_{song_id}.log"
-    logger.info("Launching spotdl: %r  tmp_dir=%s  log=%s", query, tmp_dir, log_path)
-
-    cmd = [
-        settings.SPOTDL_PATH,
-        "download",
-        query,
-        "--output", str(tmp_dir),
-        "--format", "mp3",
-        "--bitrate", "128k",
-    ]
-    if settings.SPOTDL_CONFIG:
-        cmd += ["--config"]
+    logger.info("Launching yt-dlp: %r  tmp_dir=%s  log=%s", query, tmp_dir, log_path)
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        downloaded = await asyncio.to_thread(
+            download_mp3_from_search,
+            query,
+            tmp_dir,
+            log_path,
+            settings.YTDLP_COOKIES_PATH,
+            settings.YTDLP_AUDIO_QUALITY,
+            settings.YTDLP_DENO_PATH,
+            settings.YTDLP_NODE_PATH,
         )
 
-        with open(log_path, "w", buffering=1) as log_file:
-            assert proc.stdout is not None
-            async for raw_line in proc.stdout:
-                line = raw_line.decode(errors="replace")
-                log_file.write(line)
+        if log_path.exists():
+            captured = log_path.read_text(errors="replace")
+            logger.info("yt-dlp finished output_tail=%s", captured[-800:])
 
-        await proc.wait()
-
-        with open(log_path) as lf:
-            captured = lf.read()
-        logger.info("spotdl finished (rc=%s) output_tail=%s", proc.returncode, captured[-800:])
-
-        if proc.returncode != 0:
-            raise RuntimeError(f"spotdl exited {proc.returncode}:\n{captured[-2000:]}")
-
-        tmp_mp3s = list(tmp_dir.glob("*.mp3"))
-        if not tmp_mp3s:
-            raise RuntimeError(
-                f"spotdl completed (rc=0) but no mp3 found in {tmp_dir}.\nOutput:\n{captured[-2000:]}"
-            )
-
-        downloaded = max(tmp_mp3s, key=lambda p: p.stat().st_mtime)
-
-        # Rename to a stable, song-ID-based filename so the mapping is always
-        # unambiguous — even if the same song is re-downloaded later.
         final_path = final_dir / f"{song_id}.mp3"
         downloaded.rename(final_path)
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -286,8 +258,8 @@ async def download_song(
 
     # Atomic claim: only flip to "pending" if no other worker has an active lock,
     # OR the existing lock is stale (orphaned by a crashed worker). With multiple
-    # gunicorn workers a non-atomic SELECT-then-UPDATE will spawn duplicate spotdl
-    # processes, which then race on the same yt-dlp URLs and fail.
+    # gunicorn workers a non-atomic SELECT-then-UPDATE will spawn duplicate yt-dlp
+    # jobs, which then race on the same URLs and fail.
     now = datetime.now(timezone.utc)
     stale_cutoff = now - DOWNLOAD_STALE_AFTER
 
@@ -310,7 +282,7 @@ async def download_song(
 
     if claim.rowcount == 0:
         # Another worker already owns an active, non-stale lock. Return current
-        # state without spawning a duplicate spotdl.
+        # state without spawning a duplicate download job.
         await db.refresh(song)
         logger.info(
             "Download already in progress for song %s (status=%s, started_at=%s)",
@@ -329,7 +301,7 @@ async def download_song(
 
     sf = get_session_factory()
     background_tasks.add_task(
-        _run_spotdl_download,
+        _run_ytdlp_download,
         song_id=song.id,
         user_id=current_user.id,
         artist=song.artist,

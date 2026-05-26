@@ -11,7 +11,7 @@ Group=shubham
 WorkingDirectory=/home/shubham/projects/guitar_tracker/backend
 
 # Activate the virtualenv by putting its bin/ first on PATH
-Environment="PATH=/home/shubham/projects/guitar_tracker/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/home/shubham/projects/guitar_tracker/backend/.venv/bin:/home/shubham/.deno/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Load application secrets / settings from the production .env
 EnvironmentFile=/home/shubham/projects/guitar_tracker/backend/.env

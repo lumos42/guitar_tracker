@@ -18,3 +18,5 @@ starlette==0.41.3
 gunicorn==23.0.0
 uvicorn==0.32.0
 uvloop==0.22.1
+yt-dlp>=2024.0.0
+yt-dlp-ejs==0.8.0

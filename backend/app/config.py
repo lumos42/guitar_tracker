@@ -34,9 +34,12 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = Path("/var/www/guitar_tracker/uploads")
     MAX_FILE_SIZE_MB: int = 200
 
-    # spotdl
-    SPOTDL_PATH: str = "spotdl"
-    SPOTDL_CONFIG: str = ""  # e.g. /home/user/.config/spotdl/config.json
+    # yt-dlp (song downloads)
+    YTDLP_COOKIES_PATH: Path = Path.home() / ".config" / "spotdl" / "cookies.txt"
+    YTDLP_AUDIO_QUALITY: str = "192"  # kbps for MP3 postprocessor
+    # Explicit paths help when gunicorn/systemd PATH omits ~/.deno/bin (optional)
+    YTDLP_DENO_PATH: str = ""
+    YTDLP_NODE_PATH: str = ""
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]

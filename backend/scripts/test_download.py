@@ -1,31 +1,30 @@
 #!/usr/bin/env python
 """
-test_download.py — two ways to exercise the song-download pipeline:
+test_download.py — exercise the song-download pipeline (yt-dlp).
 
-  MODE 1 (--api):  full HTTP round-trip through the running FastAPI server.
-    • Mints a JWT for --user-id (reads JWT_SECRET_KEY + JWT_ALGORITHM from .env)
-    • Creates a throwaway song (or re-uses --song-id if given)
-    • POSTs to /songs/{id}/download
-    • Polls /songs/{id}/download-status until done or timeout
+  MODE 1 (--api):  HTTP round-trip through a running FastAPI/gunicorn server.
+    • Exercises BackgroundTasks on the server worker (same as production)
+    • Mints JWT, creates or re-uses a song, POSTs /songs/{id}/download
+    • Polls /songs/{id}/download-status until downloaded or failed
 
-  MODE 2 (--direct):  calls _run_spotdl_download() in-process (no server needed).
-    • Useful to confirm the function itself works and to watch stdout live
+  MODE 2 (--direct):  calls _run_ytdlp_download() in this process (no server).
+    • Same download function the background task uses
+    • Useful to debug yt-dlp/cookies/ffmpeg without gunicorn
 
-Usage examples
---------------
-  # API mode (server must be running on APP_BASE_URL)
-  python scripts/test_download.py --api \
-      --user-id 1 \
+Usage
+-----
+  # API mode — server must be running (uvicorn or gunicorn)
+  python scripts/test_download.py --api --user-id 1 \\
       --artist "Stevie Wonder" --title "Isn't She Lovely"
 
-  # API mode, re-use an existing song
   python scripts/test_download.py --api --user-id 1 --song-id 42
 
-  # Direct mode (no server needed)
-  python scripts/test_download.py --direct \
-      --user-id 1 --song-id 99 \
+  # Direct mode — no server; requires existing song row
+  python scripts/test_download.py --direct --user-id 1 --song-id 99 \\
       --artist "Stevie Wonder" --title "Isn't She Lovely"
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -35,25 +34,15 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Make sure we can import app.* even when called from the repo root
-# ---------------------------------------------------------------------------
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-# Load .env early so Settings picks it up
 from dotenv import load_dotenv  # type: ignore
 
 load_dotenv(BACKEND_DIR / ".env")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _mint_jwt(user_id: int) -> str:
-    """Forge a valid access token for any user-id using the local .env secret."""
     from jose import jwt  # type: ignore
 
     secret = os.environ.get("JWT_SECRET_KEY", "change-me")
@@ -73,19 +62,44 @@ def _base_url() -> str:
     return os.environ.get("APP_BASE_URL", "http://localhost:9000").rstrip("/")
 
 
-# ---------------------------------------------------------------------------
-# MODE 1 — API
-# ---------------------------------------------------------------------------
+def _read_db_status(song_id: int) -> str | None:
+    """Read download_status from DB after direct run."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.database import get_session_factory, init_db  # noqa: PLC0415
+    from app.models.song import Song  # noqa: PLC0415
+
+    async def _read() -> str | None:
+        await init_db()
+        sf = get_session_factory()
+        async with sf() as db:
+            result = await db.execute(select(Song).where(Song.id == song_id))
+            song = result.scalar_one_or_none()
+            if not song:
+                print(f"[direct] song id={song_id} not found in DB")
+                return None
+            print(
+                f"[direct] DB status={song.download_status!r} "
+                f"local_file_path={song.local_file_path!r}"
+            )
+            return song.download_status
+
+    return asyncio.run(_read())
 
 
-def run_api_test(user_id: int, artist: str, title: str, song_id: int | None, timeout: int) -> None:
+def run_api_test(
+    user_id: int,
+    artist: str,
+    title: str,
+    song_id: int | None,
+    timeout: int,
+) -> int:
     import httpx
 
     token = _mint_jwt(user_id)
     base = _base_url()
     headers = {"Authorization": f"Bearer {token}"}
 
-    # ── create a throwaway song if no song_id supplied ─────────────────────
     if song_id is None:
         print(f"[api] Creating song  '{artist} – {title}'  for user {user_id} …")
         resp = httpx.post(
@@ -100,16 +114,16 @@ def run_api_test(user_id: int, artist: str, title: str, song_id: int | None, tim
     else:
         print(f"[api] Re-using song id={song_id}")
 
-    # ── trigger download ────────────────────────────────────────────────────
-    print(f"[api] POST /api/v1/songs/{song_id}/download …")
+    print(f"[api] POST /api/v1/songs/{song_id}/download  (background task on server) …")
     resp = httpx.post(f"{base}/api/v1/songs/{song_id}/download", headers=headers, timeout=10)
     resp.raise_for_status()
     data = resp.json()
     print(f"[api] Response: download_status={data.get('download_status')!r}")
 
-    # ── poll until done ─────────────────────────────────────────────────────
     deadline = time.monotonic() + timeout
     poll_interval = 3
+    ds = None
+    status_data: dict = {}
     print(f"[api] Polling status (timeout={timeout}s) …")
     while time.monotonic() < deadline:
         resp = httpx.get(
@@ -125,92 +139,118 @@ def run_api_test(user_id: int, artist: str, title: str, song_id: int | None, tim
             break
         time.sleep(poll_interval)
     else:
-        print("[api] TIMEOUT reached — download still in progress.")
-        return
+        print("[api] TIMEOUT — download still in progress (background task may still be running).")
+        return 1
 
     if ds == "downloaded":
-        print(f"[api] ✓ Download succeeded.  local_file_path={status_data.get('local_file_path')!r}")
-    else:
-        print(f"[api] ✗ Download failed.  Full status payload: {status_data}")
-        # Fetch log for debugging
-        log_resp = httpx.get(
-            f"{base}/api/v1/songs/{song_id}/download-log",
-            headers=headers,
-            timeout=10,
+        print(
+            f"[api] ✓ Download succeeded.  local_file_path={status_data.get('local_file_path')!r}"
         )
-        if log_resp.is_success:
-            log_text = log_resp.json().get("log", "")
-            print("[api] --- spotdl log (last 2 KB) ---")
-            print(log_text[-2048:])
-            print("[api] ---")
+        return 0
 
-
-# ---------------------------------------------------------------------------
-# MODE 2 — Direct
-# ---------------------------------------------------------------------------
+    print(f"[api] ✗ Download failed.  Full status payload: {status_data}")
+    log_resp = httpx.get(
+        f"{base}/api/v1/songs/{song_id}/download-log",
+        headers=headers,
+        timeout=10,
+    )
+    if log_resp.is_success:
+        log_text = log_resp.json().get("log", "")
+        print("[api] --- yt-dlp log (last 2 KB) ---")
+        print(log_text[-2048:])
+        print("[api] ---")
+    return 1
 
 
 async def _run_direct(user_id: int, song_id: int, artist: str, title: str) -> None:
     from app.database import get_session_factory, init_db  # noqa: PLC0415
+    from app.routers.songs import _run_ytdlp_download  # noqa: PLC0415
 
-    print(f"[direct] Initialising DB …")
+    print("[direct] Initialising DB …")
     await init_db()
     sf = get_session_factory()
 
-    print(f"[direct] Calling _run_spotdl_download(song_id={song_id}, user_id={user_id}, …)")
-    from app.routers.songs import _run_spotdl_download  # noqa: PLC0415
-
-    await _run_spotdl_download(
+    print(
+        f"[direct] Calling _run_ytdlp_download(song_id={song_id}, user_id={user_id}, …)"
+    )
+    await _run_ytdlp_download(
         song_id=song_id,
         user_id=user_id,
         artist=artist,
         title=title,
         session_factory=sf,
     )
-    print("[direct] _run_spotdl_download returned.")
+    print("[direct] _run_ytdlp_download returned.")
 
 
-def run_direct_test(user_id: int, song_id: int, artist: str, title: str) -> None:
+def run_direct_test(user_id: int, song_id: int, artist: str, title: str) -> int:
     asyncio.run(_run_direct(user_id, song_id, artist, title))
+    status = _read_db_status(song_id)
+    if status == "downloaded":
+        print("[direct] ✓ Download succeeded")
+        return 0
+    print(f"[direct] ✗ Download did not succeed (status={status!r})")
+    return 1
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+async def _ensure_song(user_id: int, song_id: int | None, artist: str, title: str) -> int:
+    """Create a song row for direct mode when --song-id omitted."""
+    from app.database import get_session_factory, init_db  # noqa: PLC0415
+    from app.models.song import Song  # noqa: PLC0415
+
+    await init_db()
+    sf = get_session_factory()
+    if song_id is not None:
+        return song_id
+
+    async with sf() as db:
+        song = Song(user_id=user_id, title=title, artist=artist)
+        db.add(song)
+        await db.commit()
+        await db.refresh(song)
+        print(f"[direct] Created song id={song.id}")
+        return song.id
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Test the song-download pipeline.")
+    parser = argparse.ArgumentParser(description="Test yt-dlp song download pipeline.")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--api", action="store_true", help="Test via HTTP API (server must be running)")
-    mode.add_argument("--direct", action="store_true", help="Call _run_spotdl_download() directly")
+    mode.add_argument(
+        "--api",
+        action="store_true",
+        help="Test via HTTP API (exercises server BackgroundTasks)",
+    )
+    mode.add_argument(
+        "--direct",
+        action="store_true",
+        help="Call _run_ytdlp_download() in-process",
+    )
 
-    parser.add_argument("--user-id", type=int, default=1, help="User ID to act as (default: 1)")
-    parser.add_argument("--song-id", type=int, default=None, help="Re-use existing song id (optional)")
-    parser.add_argument("--artist", default="Stevie Wonder", help="Artist name")
-    parser.add_argument("--title", default="Isn't She Lovely", help="Song title")
-    parser.add_argument("--timeout", type=int, default=300, help="Polling timeout in seconds (api mode)")
+    parser.add_argument("--user-id", type=int, default=1)
+    parser.add_argument("--song-id", type=int, default=None)
+    parser.add_argument("--artist", default="Stevie Wonder")
+    parser.add_argument("--title", default="Isn't She Lovely")
+    parser.add_argument("--timeout", type=int, default=300, help="API poll timeout (seconds)")
 
     args = parser.parse_args()
 
-    if args.direct and args.song_id is None:
-        parser.error("--direct requires --song-id (the song must already exist in the DB)")
-
     if args.api:
-        run_api_test(
-            user_id=args.user_id,
-            artist=args.artist,
-            title=args.title,
-            song_id=args.song_id,
-            timeout=args.timeout,
+        sys.exit(
+            run_api_test(
+                user_id=args.user_id,
+                artist=args.artist,
+                title=args.title,
+                song_id=args.song_id,
+                timeout=args.timeout,
+            )
         )
-    else:
-        run_direct_test(
-            user_id=args.user_id,
-            song_id=args.song_id,
-            artist=args.artist,
-            title=args.title,
+
+    song_id = args.song_id
+    if song_id is None:
+        song_id = asyncio.run(
+            _ensure_song(args.user_id, None, args.artist, args.title)
         )
+    sys.exit(run_direct_test(args.user_id, song_id, args.artist, args.title))
 
 
 if __name__ == "__main__":

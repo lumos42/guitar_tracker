@@ -17,7 +17,7 @@ dependencies = [
     "python-multipart==0.0.12",
     "aiofiles==24.1.0",
     "python-slugify==8.0.4",
-    "spotdl>=4.2.0",
+    "yt-dlp[default]>=2024.0.0",
 ]
 
 [project.optional-dependencies]
