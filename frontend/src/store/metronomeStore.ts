@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { clampBpm } from '@/lib/songMetronome'
+import { clampBpm, effectiveSongBpm } from '@/lib/songMetronome'
 
 type TimeSig = 2 | 3 | 4 | 6
 
@@ -14,11 +14,13 @@ interface MetronomeState {
   beatsPerBar: TimeSig
   activeExerciseId: number | null
   activeSongId: number | null
+  songBaseBpm: number | null
   exerciseContexts: Record<string, ExerciseMetronomeContext>
   setBpm: (bpm: number) => void
   setBeatsPerBar: (beatsPerBar: TimeSig) => void
   setExerciseContext: (exerciseId: number, defaults: ExerciseMetronomeContext) => void
-  setSongContext: (songId: number, baseBpm: number) => void
+  setSongContext: (songId: number, baseBpm: number, speed?: number) => void
+  setSongPlaybackSpeed: (speed: number) => void
   clearSongContext: () => void
 }
 
@@ -31,6 +33,7 @@ export const useMetronomeStore = create<MetronomeState>()(
       beatsPerBar: 4,
       activeExerciseId: null,
       activeSongId: null,
+      songBaseBpm: null,
       exerciseContexts: {},
       setBpm: (value) => {
         const bpm = clampBpm(value)
@@ -69,6 +72,7 @@ export const useMetronomeStore = create<MetronomeState>()(
         set((state) => ({
           activeExerciseId: exerciseId,
           activeSongId: null,
+          songBaseBpm: null,
           bpm: context.bpm,
           beatsPerBar: context.beatsPerBar,
           exerciseContexts: existing
@@ -76,15 +80,21 @@ export const useMetronomeStore = create<MetronomeState>()(
             : { ...state.exerciseContexts, [key]: context },
         }))
       },
-      setSongContext: (songId, baseBpm) => {
+      setSongContext: (songId, baseBpm, speed = 1) => {
         set({
           activeSongId: songId,
           activeExerciseId: null,
-          bpm: clampBpm(baseBpm),
+          songBaseBpm: baseBpm,
+          bpm: effectiveSongBpm(baseBpm, speed),
         })
       },
+      setSongPlaybackSpeed: (speed) => {
+        const { activeSongId, songBaseBpm } = get()
+        if (!activeSongId || songBaseBpm == null) return
+        set({ bpm: effectiveSongBpm(songBaseBpm, speed) })
+      },
       clearSongContext: () => {
-        set({ activeSongId: null })
+        set({ activeSongId: null, songBaseBpm: null })
       },
     }),
     {

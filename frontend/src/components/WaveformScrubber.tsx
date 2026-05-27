@@ -405,7 +405,7 @@ export function WaveformScrubber({
 
   if (!isExpanded) {
     return (
-      <div className="flex flex-col gap-1.5 w-full">
+      <div className="flex flex-col gap-1.5 w-full select-none touch-none">
         <div
           className="relative h-1.5 rounded-full overflow-hidden"
           style={{ background: 'var(--bg-overlay)' }}
@@ -421,7 +421,7 @@ export function WaveformScrubber({
             step={0.1}
             value={currentTime}
             onChange={handleCollapsedSeek}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer touch-none"
             aria-label="Seek"
           />
         </div>
@@ -453,7 +453,7 @@ export function WaveformScrubber({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5 select-none">
       <div className="flex items-center justify-between">
         <span
           className="text-[10px] font-bold uppercase tracking-[0.06em]"

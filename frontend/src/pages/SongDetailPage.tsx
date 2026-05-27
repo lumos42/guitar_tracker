@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Music2, Download, AlertCircle, FileMusic, Mic, Square, Pencil, Play, Pause, Share2, Trash2 } from 'lucide-react'
 import {
@@ -22,7 +22,6 @@ import { Modal } from '@/components/ui/Modal'
 import { Spinner } from '@/components/ui/Spinner'
 import { SongPlayer } from '@/components/SongPlayer'
 import { useMetronomeStore } from '@/store/metronomeStore'
-import { effectiveSongBpm } from '@/lib/songMetronome'
 import type { ChordChart, Recording, Song } from '@/types'
 
 function SongNotesModal({
@@ -321,9 +320,8 @@ export function SongDetailPage() {
   const [notesOpen, setNotesOpen] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
   const setSongContext = useMetronomeStore((s) => s.setSongContext)
+  const setSongPlaybackSpeed = useMetronomeStore((s) => s.setSongPlaybackSpeed)
   const clearSongContext = useMetronomeStore((s) => s.clearSongContext)
-  const setBpm = useMetronomeStore((s) => s.setBpm)
-  const activeSongId = useMetronomeStore((s) => s.activeSongId)
   const [chartLabel, setChartLabel] = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -352,15 +350,15 @@ export function SongDetailPage() {
 
   useEffect(() => {
     if (!song?.bpm) return
-    setSongContext(song.id, song.bpm)
+    setSongContext(song.id, song.bpm, playbackSpeed)
   }, [song?.id, song?.bpm, setSongContext])
 
   useEffect(() => () => clearSongContext(), [clearSongContext])
 
-  useEffect(() => {
-    if (!song?.bpm || activeSongId !== song.id) return
-    setBpm(effectiveSongBpm(song.bpm, playbackSpeed))
-  }, [song?.bpm, song?.id, playbackSpeed, activeSongId, setBpm])
+  const handlePlaybackSpeedChange = useCallback((speed: number) => {
+    setPlaybackSpeed(speed)
+    setSongPlaybackSpeed(speed)
+  }, [setSongPlaybackSpeed])
 
   if (songLoading) return <div className="flex justify-center py-24"><Spinner /></div>
   if (!song) return null
@@ -591,7 +589,7 @@ export function SongDetailPage() {
         )}
 
         {/* ── Song player ── */}
-        <SongAudioPlayer song={song} speed={playbackSpeed} onSpeedChange={setPlaybackSpeed} />
+        <SongAudioPlayer song={song} speed={playbackSpeed} onSpeedChange={handlePlaybackSpeedChange} />
 
         {/* ── Recordings (Takes) ── */}
         <div
