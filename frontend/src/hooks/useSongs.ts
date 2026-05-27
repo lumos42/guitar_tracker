@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { sortSongsByRecentAccess } from '@/lib/utils'
+import { parseApiDate, sortSongsByRecentAccess } from '@/lib/utils'
 import type { Song, SpotifyTrack, PagedResponse, ChordChart, Recording, DownloadStatus } from '@/types'
 
 export const songKeys = {
@@ -151,11 +151,35 @@ export function useUploadChordChart(songId: number) {
   })
 }
 
+function sortRecordingsByRecordedAt(recordings: Recording[]): Recording[] {
+  return [...recordings].sort(
+    (a, b) => parseApiDate(b.recorded_at).getTime() - parseApiDate(a.recorded_at).getTime(),
+  )
+}
+
 export function useSongRecordings(songId: number) {
   return useQuery({
     queryKey: songKeys.recordings(songId),
-    queryFn: () => api.get<Recording[]>(`/recordings/songs/${songId}`).then(r => r.data),
+    queryFn: () =>
+      api.get<Recording[]>(`/recordings/songs/${songId}`).then((r) => sortRecordingsByRecordedAt(r.data)),
     enabled: Number.isFinite(songId) && songId > 0,
+  })
+}
+
+export function useUpdateRecording(songId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, label }: { id: number; label: string | null }) =>
+      api.patch<Recording>(`/recordings/${id}`, { label }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: songKeys.recordings(songId) }),
+  })
+}
+
+export function useDeleteRecording(songId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.delete(`/recordings/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: songKeys.recordings(songId) }),
   })
 }
 

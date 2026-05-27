@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Music2, Download, AlertCircle, FileMusic, Mic, Square, Pencil, Play, Pause, Share2 } from 'lucide-react'
+import { ArrowLeft, Music2, Download, AlertCircle, FileMusic, Mic, Square, Pencil, Play, Pause, Share2, Trash2 } from 'lucide-react'
 import {
   useSong,
   useDownloadSong,
@@ -11,7 +11,11 @@ import {
   useUploadChordChart,
   useSongRecordings,
   useUploadSongRecording,
+  useUpdateRecording,
+  useDeleteRecording,
 } from '@/hooks/useSongs'
+import { EditableRecordingLabel } from '@/components/EditableRecordingLabel'
+import { getRecordingDisplayLabel } from '@/lib/utils'
 import { useAuthenticatedMediaUrl } from '@/hooks/useAuthenticatedMediaUrl'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -57,7 +61,15 @@ function SongNotesModal({
   )
 }
 
-function RecordingPlayer({ recording }: { recording: Recording }) {
+function RecordingPlayer({
+  recording,
+  onDelete,
+  isDeleting,
+}: {
+  recording: Recording
+  onDelete?: () => void
+  isDeleting?: boolean
+}) {
   const { data: mediaUrl, isLoading } = useAuthenticatedMediaUrl(recording.stream_url)
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -130,7 +142,8 @@ function RecordingPlayer({ recording }: { recording: Recording }) {
             : blob.type.includes('mp4')
               ? 'm4a'
               : 'webm'
-      const baseName = (recording.label || `take-${recording.id}`)
+      const displayLabel = getRecordingDisplayLabel(recording)
+      const baseName = displayLabel
         .trim()
         .replace(/[^a-z0-9-_]+/gi, '-')
         .replace(/^-+|-+$/g, '')
@@ -142,14 +155,14 @@ function RecordingPlayer({ recording }: { recording: Recording }) {
       if (navigator.share) {
         if (navigator.canShare?.({ files: [file] })) {
           await navigator.share({
-            title: recording.label || `Take ${recording.id}`,
+            title: displayLabel,
             text: 'Shared from Guitar Tracker',
             files: [file],
           })
           return
         }
         await navigator.share({
-          title: recording.label || `Take ${recording.id}`,
+          title: displayLabel,
           text: 'Shared from Guitar Tracker',
         })
         return
@@ -207,6 +220,22 @@ function RecordingPlayer({ recording }: { recording: Recording }) {
         >
           <Share2 size={15} />
         </button>
+
+        {onDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={isDeleting}
+            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}
+            aria-label="Delete take"
+            title="Delete take"
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)' }}
+          >
+            {isDeleting ? <Spinner className="w-3.5 h-3.5" /> : <Trash2 size={15} />}
+          </button>
+        )}
 
         <div className="flex-1 min-w-0 flex flex-col gap-1.5">
           <input
@@ -299,6 +328,8 @@ export function SongDetailPage() {
   const updateSong = useUpdateSong()
   const uploadChordChart = useUploadChordChart(songId)
   const uploadSongRecording = useUploadSongRecording(songId)
+  const updateRecording = useUpdateRecording(songId)
+  const deleteRecording = useDeleteRecording(songId)
 
   if (songLoading) return <div className="flex justify-center py-24"><Spinner /></div>
   if (!song) return null
@@ -550,10 +581,16 @@ export function SongDetailPage() {
             <div className="flex flex-col gap-3">
               {recordings.map((recording) => (
                 <div key={recording.id}>
-                  <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
-                    {recording.label || `Take ${recording.id}`}
-                  </p>
-                  <RecordingPlayer recording={recording} />
+                  <EditableRecordingLabel
+                    recording={recording}
+                    isSaving={updateRecording.isPending}
+                    onSave={(label) => updateRecording.mutate({ id: recording.id, label })}
+                  />
+                  <RecordingPlayer
+                    recording={recording}
+                    onDelete={() => deleteRecording.mutate(recording.id)}
+                    isDeleting={deleteRecording.isPending && deleteRecording.variables === recording.id}
+                  />
                 </div>
               ))}
             </div>

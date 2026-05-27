@@ -34,7 +34,19 @@ export function formatDate(iso: string): string {
   return parseApiDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function parseApiDate(iso: string): Date {
+export function formatRecordingDefaultLabel(recordedAt: string): string {
+  const d = parseApiDate(recordedAt)
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  return `${date}, ${time}`
+}
+
+export function getRecordingDisplayLabel(recording: { label: string | null; recorded_at: string }): string {
+  const trimmed = recording.label?.trim()
+  return trimmed || formatRecordingDefaultLabel(recording.recorded_at)
+}
+
+export function parseApiDate(iso: string): Date {
   // If backend sends no timezone suffix, treat it as UTC.
   if (/([zZ]|[+\-]\d{2}:\d{2})$/.test(iso)) return new Date(iso)
   return new Date(`${iso}Z`)

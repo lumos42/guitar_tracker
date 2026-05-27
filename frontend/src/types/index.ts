@@ -56,6 +56,7 @@ export interface Recording {
   section: RecordingSection
   recorded_at: string
   label: string | null
+  created_at?: string
   stream_url?: string
 }
 

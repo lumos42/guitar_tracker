@@ -33,3 +33,7 @@ dist-ssr/
 *.sqlite3
 uploads/
 media/
+
+tmp_spotdl_test/
+*.mp3
+*.deb

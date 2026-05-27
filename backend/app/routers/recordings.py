@@ -42,7 +42,7 @@ async def list_song_recordings(
             Recording.deleted_at.is_(None),
             PracticeSession.deleted_at.is_(None),
         )
-        .order_by(Recording.created_at.desc())
+        .order_by(Recording.recorded_at.desc())
     )
     return [_to_response(r) for r in result.scalars().all()]
 
