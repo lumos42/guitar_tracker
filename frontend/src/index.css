@@ -78,6 +78,12 @@ body {
   min-height: 100dvh;
 }
 
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
 h1, h2, h3, h4 {
   font-family: var(--font-display);
   margin: 0;

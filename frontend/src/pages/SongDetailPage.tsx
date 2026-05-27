@@ -22,7 +22,10 @@ import { Modal } from '@/components/ui/Modal'
 import { Spinner } from '@/components/ui/Spinner'
 import { SongPlayer } from '@/components/SongPlayer'
 import { useMetronomeStore } from '@/store/metronomeStore'
+import { acquireMicStream, releaseMicStream } from '@/lib/micStream'
 import type { ChordChart, Recording, Song } from '@/types'
+
+const MIN_RECORDING_SECONDS = 5
 
 function SongNotesModal({
   songNotes,
@@ -57,6 +60,73 @@ function SongNotesModal({
         <Button type="button" size="lg" className="w-full" disabled={isSaving} onClick={() => onSave(notes)}>
           {isSaving ? <Spinner className="w-4 h-4" /> : 'Save Notes'}
         </Button>
+      </div>
+    </Modal>
+  )
+}
+
+function ShortRecordingModal({
+  open,
+  durationSeconds,
+  onClose,
+  onSave,
+  onDiscard,
+  isSaving,
+}: {
+  open: boolean
+  durationSeconds: number
+  onClose: () => void
+  onSave: () => void
+  onDiscard: () => void
+  isSaving: boolean
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Short take">
+      <div className="flex flex-col gap-4">
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          This take is only {durationSeconds.toFixed(1)} seconds long (under {MIN_RECORDING_SECONDS} seconds).
+          Save it anyway, or discard it?
+        </p>
+        <div className="flex flex-col gap-2">
+          <Button type="button" size="lg" className="w-full" disabled={isSaving} onClick={onSave}>
+            {isSaving ? <Spinner className="w-4 h-4" /> : 'Save take'}
+          </Button>
+          <Button type="button" size="lg" variant="secondary" className="w-full" disabled={isSaving} onClick={onDiscard}>
+            Discard
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function DeleteTakeModal({
+  open,
+  takeLabel,
+  onClose,
+  onConfirm,
+  isDeleting,
+}: {
+  open: boolean
+  takeLabel: string
+  onClose: () => void
+  onConfirm: () => void
+  isDeleting: boolean
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Delete take?">
+      <div className="flex flex-col gap-4">
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          Delete <span style={{ color: 'var(--text-primary)' }}>{takeLabel}</span>? This cannot be undone.
+        </p>
+        <div className="flex flex-col gap-2">
+          <Button type="button" size="lg" variant="danger" className="w-full" disabled={isDeleting} onClick={onConfirm}>
+            {isDeleting ? <Spinner className="w-4 h-4" /> : 'Delete take'}
+          </Button>
+          <Button type="button" size="lg" variant="secondary" className="w-full" disabled={isDeleting} onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
       </div>
     </Modal>
   )
@@ -324,9 +394,12 @@ export function SongDetailPage() {
   const clearSongContext = useMetronomeStore((s) => s.clearSongContext)
   const [chartLabel, setChartLabel] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [pendingShortRecording, setPendingShortRecording] = useState<{ blob: Blob; durationSeconds: number } | null>(null)
+  const [deleteConfirmRecordingId, setDeleteConfirmRecordingId] = useState<number | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
+  const recordingStartedAtRef = useRef<number | null>(null)
 
   const isActiveDownload = (status: string | null | undefined) =>
     status === 'pending' || status === 'downloading'
@@ -381,8 +454,10 @@ export function SongDetailPage() {
   }
 
   const startRecording = async () => {
+    let micAcquired = false
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await acquireMicStream()
+      micAcquired = true
       streamRef.current = stream
       const preferredMimeTypes = [
         'audio/mp4',
@@ -404,19 +479,45 @@ export function SongDetailPage() {
       mediaRecorder.onstop = () => {
         const recordingMimeType = mediaRecorder.mimeType || selectedMimeType || chunksRef.current[0]?.type || 'audio/webm'
         const blob = new Blob(chunksRef.current, { type: recordingMimeType })
-        uploadSongRecording.mutate({ file: blob })
-        streamRef.current?.getTracks().forEach((track) => track.stop())
+        const startedAt = recordingStartedAtRef.current ?? Date.now()
+        const durationSeconds = (Date.now() - startedAt) / 1000
+        recordingStartedAtRef.current = null
+        releaseMicStream()
         streamRef.current = null
         setIsRecording(false)
+
+        if (durationSeconds < MIN_RECORDING_SECONDS) {
+          setPendingShortRecording({ blob, durationSeconds })
+        } else {
+          uploadSongRecording.mutate({ file: blob })
+        }
       }
 
       mediaRecorderRef.current = mediaRecorder
+      recordingStartedAtRef.current = Date.now()
       mediaRecorder.start()
       setIsRecording(true)
     } catch {
+      if (micAcquired) releaseMicStream()
       setIsRecording(false)
     }
   }
+
+  const discardPendingShortRecording = () => {
+    setPendingShortRecording(null)
+  }
+
+  const savePendingShortRecording = () => {
+    if (!pendingShortRecording) return
+    uploadSongRecording.mutate(
+      { file: pendingShortRecording.blob },
+      { onSettled: () => setPendingShortRecording(null) }
+    )
+  }
+
+  const deleteConfirmRecording = deleteConfirmRecordingId != null
+    ? recordings?.find((recording) => recording.id === deleteConfirmRecordingId)
+    : undefined
 
   return (
     <div className="animate-fade-up overflow-x-hidden">
@@ -522,7 +623,7 @@ export function SongDetailPage() {
           <button
             type="button"
             onClick={startRecording}
-            disabled={uploadSongRecording.isPending}
+            disabled={uploadSongRecording.isPending || !!pendingShortRecording}
             className="w-full flex items-center justify-center gap-3 rounded-2xl py-4 text-base font-bold transition-all active:scale-[0.98] disabled:opacity-60"
             style={{
               background: 'var(--accent-dim)',
@@ -617,7 +718,7 @@ export function SongDetailPage() {
                   />
                   <RecordingPlayer
                     recording={recording}
-                    onDelete={() => deleteRecording.mutate(recording.id)}
+                    onDelete={() => setDeleteConfirmRecordingId(recording.id)}
                     isDeleting={deleteRecording.isPending && deleteRecording.variables === recording.id}
                   />
                 </div>
@@ -702,6 +803,28 @@ export function SongDetailPage() {
         onClose={() => setNotesOpen(false)}
         onSave={saveNotes}
         isSaving={updateSong.isPending}
+      />
+
+      <ShortRecordingModal
+        open={!!pendingShortRecording}
+        durationSeconds={pendingShortRecording?.durationSeconds ?? 0}
+        onClose={discardPendingShortRecording}
+        onSave={savePendingShortRecording}
+        onDiscard={discardPendingShortRecording}
+        isSaving={uploadSongRecording.isPending}
+      />
+
+      <DeleteTakeModal
+        open={deleteConfirmRecordingId != null}
+        takeLabel={deleteConfirmRecording ? getRecordingDisplayLabel(deleteConfirmRecording) : 'this take'}
+        onClose={() => setDeleteConfirmRecordingId(null)}
+        onConfirm={() => {
+          if (deleteConfirmRecordingId == null) return
+          deleteRecording.mutate(deleteConfirmRecordingId, {
+            onSuccess: () => setDeleteConfirmRecordingId(null),
+          })
+        }}
+        isDeleting={deleteRecording.isPending}
       />
     </div>
   )

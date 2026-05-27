@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Guitar } from 'lucide-react'
+import { acquireMicStream, releaseMicStream } from '@/lib/micStream'
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -252,6 +253,7 @@ export function TunerPage() {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const micHeldRef = useRef(false)
   const rafRef = useRef<number | null>(null)
   const bufRef = useRef(new Float32Array(2048))
   const smoothedFreqRef = useRef<number>(-1)
@@ -342,7 +344,8 @@ export function TunerPage() {
   async function startListening() {
     setPermError(false)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const stream = await acquireMicStream()
+      micHeldRef.current = true
       streamRef.current = stream
       const ctx = new AudioContext()
       audioCtxRef.current = ctx
@@ -360,7 +363,10 @@ export function TunerPage() {
 
   function stopListening() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    streamRef.current?.getTracks().forEach((t) => t.stop())
+    if (micHeldRef.current) {
+      releaseMicStream()
+      micHeldRef.current = false
+    }
     audioCtxRef.current?.close().catch(() => {})
     audioCtxRef.current = null
     analyserRef.current = null

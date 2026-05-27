@@ -128,3 +128,23 @@ The backend stores pending OAuth state in a **signed httpOnly cookie** (`oauth_s
 - State expires after 10 minutes on the Google consent screen.
 
 If you scale to **multiple backend hosts** behind a load balancer, cookies still work; only add Redis (or similar) if you need server-side session storage beyond that.
+
+## PWA (installable app)
+
+The frontend ships as a Progressive Web App at `https://guitar.lanomilano.com`. After deploy, confirm `frontend/dist/` contains `manifest.webmanifest`, `sw.js`, and PNG icons.
+
+### Manual test checklist
+
+| Test | Expected |
+|------|----------|
+| Open in Safari (normal tab) | Install banner visible; Safari bottom bar still present |
+| iOS: Share → Add to Home Screen → open icon | Full screen, no URL bar |
+| Android Chrome | Install banner; native install when offered |
+| Tuner → navigate away → record on a song | No second microphone prompt in same session |
+| Log out | Mic stream released |
+
+### Regenerate icons after favicon changes
+
+```bash
+cd frontend && npm run generate-icons && npm run build
+```

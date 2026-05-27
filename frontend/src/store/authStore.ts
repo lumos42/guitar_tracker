@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { stopSharedMicStream } from '@/lib/micStream'
 import type { User } from '@/types'
 
 interface AuthState {
@@ -17,7 +18,10 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       setUser: (user) => set({ user }),
       setAccessToken: (accessToken) => set({ accessToken }),
-      logout: () => set({ user: null, accessToken: null }),
+      logout: () => {
+        stopSharedMicStream()
+        set({ user: null, accessToken: null })
+      },
     }),
     { name: 'guitar-tracker-auth', partialize: (s) => ({ user: s.user, accessToken: s.accessToken }) }
   )
