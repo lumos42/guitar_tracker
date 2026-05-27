@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { clampBpm } from '@/lib/songMetronome'
 
 type TimeSig = 2 | 3 | 4 | 6
 
@@ -12,13 +13,15 @@ interface MetronomeState {
   bpm: number
   beatsPerBar: TimeSig
   activeExerciseId: number | null
+  activeSongId: number | null
   exerciseContexts: Record<string, ExerciseMetronomeContext>
   setBpm: (bpm: number) => void
   setBeatsPerBar: (beatsPerBar: TimeSig) => void
   setExerciseContext: (exerciseId: number, defaults: ExerciseMetronomeContext) => void
+  setSongContext: (songId: number, baseBpm: number) => void
+  clearSongContext: () => void
 }
 
-const clampBpm = (value: number) => Math.max(40, Math.min(250, Math.round(value)))
 const toContextKey = (exerciseId: number) => String(exerciseId)
 
 export const useMetronomeStore = create<MetronomeState>()(
@@ -27,6 +30,7 @@ export const useMetronomeStore = create<MetronomeState>()(
       bpm: 120,
       beatsPerBar: 4,
       activeExerciseId: null,
+      activeSongId: null,
       exerciseContexts: {},
       setBpm: (value) => {
         const bpm = clampBpm(value)
@@ -64,12 +68,23 @@ export const useMetronomeStore = create<MetronomeState>()(
         }
         set((state) => ({
           activeExerciseId: exerciseId,
+          activeSongId: null,
           bpm: context.bpm,
           beatsPerBar: context.beatsPerBar,
           exerciseContexts: existing
             ? state.exerciseContexts
             : { ...state.exerciseContexts, [key]: context },
         }))
+      },
+      setSongContext: (songId, baseBpm) => {
+        set({
+          activeSongId: songId,
+          activeExerciseId: null,
+          bpm: clampBpm(baseBpm),
+        })
+      },
+      clearSongContext: () => {
+        set({ activeSongId: null })
       },
     }),
     {

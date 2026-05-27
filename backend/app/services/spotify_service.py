@@ -1,11 +1,15 @@
+import logging
 import time
 import base64
 import httpx
 from fastapi import HTTPException, status
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 SPOTIFY_SEARCH_URL = "https://api.spotify.com/v1/search"
+AUDIO_FEATURES_URL = "https://api.spotify.com/v1/audio-features/{track_id}"
 
 
 class SpotifyService:
@@ -83,6 +87,40 @@ class SpotifyService:
                 "duration_ms": item.get("duration_ms"),
             })
         return results
+
+    async def get_track_bpm(self, track_id: str) -> int | None:
+        token = await self._get_token()
+        url = AUDIO_FEATURES_URL.format(track_id=track_id)
+
+        async def _fetch(auth_token: str) -> httpx.Response:
+            async with httpx.AsyncClient() as client:
+                return await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {auth_token}"},
+                )
+
+        resp = await _fetch(token)
+
+        if resp.status_code == 401:
+            await self._refresh_token()
+            resp = await _fetch(self._token)
+
+        if resp.status_code == 404:
+            logger.info("Spotify audio features not found for track %s", track_id)
+            return None
+
+        if resp.status_code != 200:
+            logger.warning(
+                "Spotify audio features failed for track %s: status=%s",
+                track_id,
+                resp.status_code,
+            )
+            return None
+
+        tempo = resp.json().get("tempo")
+        if tempo is None:
+            return None
+        return round(tempo)
 
 
 spotify_service = SpotifyService()

@@ -31,6 +31,7 @@ class SongResponse(BaseModel):
     album: Optional[str]
     album_art_url: Optional[str]
     duration_ms: Optional[int]
+    bpm: Optional[int] = None
     notes: Optional[str]
     download_status: Optional[str] = None
     download_started_at: Optional[datetime] = None

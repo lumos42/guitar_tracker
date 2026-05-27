@@ -15,6 +15,7 @@ export interface Song {
   album: string | null
   album_art_url: string | null
   duration_ms: number | null
+  bpm: number | null
   notes: string | null
   spotify_track_id: string | null
   download_status: SongDownloadStatus

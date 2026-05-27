@@ -21,6 +21,8 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Spinner } from '@/components/ui/Spinner'
 import { SongPlayer } from '@/components/SongPlayer'
+import { useMetronomeStore } from '@/store/metronomeStore'
+import { effectiveSongBpm } from '@/lib/songMetronome'
 import type { ChordChart, Recording, Song } from '@/types'
 
 function SongNotesModal({
@@ -283,7 +285,15 @@ function ChordChartItem({ chart }: { chart: ChordChart }) {
   )
 }
 
-function SongAudioPlayer({ song }: { song: Song }) {
+function SongAudioPlayer({
+  song,
+  speed,
+  onSpeedChange,
+}: {
+  song: Song
+  speed: number
+  onSpeedChange: (speed: number) => void
+}) {
   const { data: blobUrl, isLoading } = useAuthenticatedMediaUrl(
     song.download_status === 'downloaded' && song.audio_url ? song.audio_url : undefined
   )
@@ -301,7 +311,7 @@ function SongAudioPlayer({ song }: { song: Song }) {
 
   if (!blobUrl) return null
 
-  return <SongPlayer audioUrl={blobUrl} title={song.title} />
+  return <SongPlayer audioUrl={blobUrl} title={song.title} speed={speed} onSpeedChange={onSpeedChange} />
 }
 
 export function SongDetailPage() {
@@ -309,6 +319,11 @@ export function SongDetailPage() {
   const songId = Number(id)
   const navigate = useNavigate()
   const [notesOpen, setNotesOpen] = useState(false)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
+  const setSongContext = useMetronomeStore((s) => s.setSongContext)
+  const clearSongContext = useMetronomeStore((s) => s.clearSongContext)
+  const setBpm = useMetronomeStore((s) => s.setBpm)
+  const activeSongId = useMetronomeStore((s) => s.activeSongId)
   const [chartLabel, setChartLabel] = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -330,6 +345,22 @@ export function SongDetailPage() {
   const uploadSongRecording = useUploadSongRecording(songId)
   const updateRecording = useUpdateRecording(songId)
   const deleteRecording = useDeleteRecording(songId)
+
+  useEffect(() => {
+    setPlaybackSpeed(1.0)
+  }, [songId])
+
+  useEffect(() => {
+    if (!song?.bpm) return
+    setSongContext(song.id, song.bpm)
+  }, [song?.id, song?.bpm, setSongContext])
+
+  useEffect(() => () => clearSongContext(), [clearSongContext])
+
+  useEffect(() => {
+    if (!song?.bpm || activeSongId !== song.id) return
+    setBpm(effectiveSongBpm(song.bpm, playbackSpeed))
+  }, [song?.bpm, song?.id, playbackSpeed, activeSongId, setBpm])
 
   if (songLoading) return <div className="flex justify-center py-24"><Spinner /></div>
   if (!song) return null
@@ -560,7 +591,7 @@ export function SongDetailPage() {
         )}
 
         {/* ── Song player ── */}
-        <SongAudioPlayer song={song} />
+        <SongAudioPlayer song={song} speed={playbackSpeed} onSpeedChange={setPlaybackSpeed} />
 
         {/* ── Recordings (Takes) ── */}
         <div

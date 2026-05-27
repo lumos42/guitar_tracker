@@ -1,9 +1,12 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { Play, Pause } from 'lucide-react'
+import { WaveformScrubber } from '@/components/WaveformScrubber'
 
 interface SongPlayerProps {
   audioUrl: string
   title: string
+  speed: number
+  onSpeedChange: (speed: number) => void
 }
 
 function formatTime(seconds: number): string {
@@ -37,12 +40,11 @@ function msToAudioTime(ms: number): number {
   return ms / 1000
 }
 
-export function SongPlayer({ audioUrl }: SongPlayerProps) {
+export function SongPlayer({ audioUrl, speed, onSpeedChange }: SongPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [speed, setSpeed] = useState(1.0)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [loopStartMs, setLoopStartMs] = useState(0)
   const [loopEndMs, setLoopEndMs] = useState(0)
@@ -110,14 +112,6 @@ export function SongPlayer({ audioUrl }: SongPlayerProps) {
     }
   }
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const audio = audioRef.current
-    if (!audio) return
-    const t = parseFloat(e.target.value)
-    audio.currentTime = t
-    setCurrentTime(t)
-  }
-
   const restart = () => {
     const audio = audioRef.current
     if (!audio) return
@@ -174,7 +168,6 @@ export function SongPlayer({ audioUrl }: SongPlayerProps) {
     }
   }
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const loopRangeLeft = durationMs > 0 ? (loopStartMs / durationMs) * 100 : 0
   const loopRangeWidth = durationMs > 0 ? ((loopEndMs - loopStartMs) / durationMs) * 100 : 0
   const loopPlayheadLeft = duration > 0 ? (currentTime / duration) * 100 : 0
@@ -220,32 +213,21 @@ export function SongPlayer({ audioUrl }: SongPlayerProps) {
       />
 
       <div className="px-4 pb-4 flex flex-col gap-4">
-        {/* Seek bar */}
-        <div className="flex flex-col gap-1.5">
-          <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-overlay)' }}>
-            <div
-              className="absolute inset-y-0 left-0 rounded-full transition-none"
-              style={{ width: `${progress}%`, background: 'var(--accent)' }}
-            />
-            <input
-              type="range"
-              min={0}
-              max={duration || 1}
-              step={0.1}
-              value={currentTime}
-              onChange={handleSeek}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-          </div>
-          <div className="flex justify-between">
-            <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
-              {formatTime(currentTime)}
-            </span>
-            <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
-              {formatTime(duration)}
-            </span>
-          </div>
-        </div>
+        <WaveformScrubber
+          audioUrl={audioUrl}
+          currentTime={currentTime}
+          duration={duration}
+          isPlaying={isPlaying}
+          getCurrentTime={() => audioRef.current?.currentTime ?? currentTime}
+          loopStartMs={loopEnabled ? loopStartMs : undefined}
+          loopEndMs={loopEnabled ? loopEndMs : undefined}
+          onSeek={(t) => {
+            const audio = audioRef.current
+            if (!audio) return
+            audio.currentTime = t
+            setCurrentTime(t)
+          }}
+        />
 
         {/* Transport controls */}
         <div className="flex items-center justify-center gap-4">
@@ -315,7 +297,7 @@ export function SongPlayer({ audioUrl }: SongPlayerProps) {
               max={1.25}
               step={0.01}
               value={speed}
-              onChange={e => setSpeed(parseFloat(e.target.value))}
+              onChange={e => onSpeedChange(parseFloat(e.target.value))}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
           </div>
@@ -325,7 +307,7 @@ export function SongPlayer({ audioUrl }: SongPlayerProps) {
               {[0.5, 0.6, 0.75, 1.0, 1.25].map(v => (
                 <button
                   key={v}
-                  onClick={() => setSpeed(v)}
+                  onClick={() => onSpeedChange(v)}
                   className="text-[10px] font-bold px-1.5 py-0.5 rounded-md transition-all"
                   style={{
                     fontFamily: 'var(--font-display)',

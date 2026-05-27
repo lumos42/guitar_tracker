@@ -25,6 +25,7 @@ class Song(Base, TimestampMixin):
     album: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     album_art_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    bpm: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     download_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)

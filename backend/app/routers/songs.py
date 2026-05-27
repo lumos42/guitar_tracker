@@ -23,6 +23,7 @@ from app.schemas.song import (
     SongStats,
     SongUpdate,
 )
+from app.services.spotify_service import spotify_service
 from app.services.ytdlp_service import download_mp3_from_search
 from app.utils.pagination import PageResponse
 
@@ -83,8 +84,12 @@ async def create_song(
                 },
             )
 
+    bpm: Optional[int] = None
+    if body.spotify_track_id:
+        bpm = await spotify_service.get_track_bpm(body.spotify_track_id)
+
     now = datetime.now(timezone.utc)
-    song = Song(**body.model_dump(), user_id=current_user.id, last_accessed_at=now)
+    song = Song(**body.model_dump(), user_id=current_user.id, last_accessed_at=now, bpm=bpm)
     db.add(song)
     await db.commit()
     await db.refresh(song)
@@ -103,6 +108,11 @@ async def get_song(
     song = result.scalar_one_or_none()
     if not song:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Song not found")
+
+    if song.spotify_track_id and song.bpm is None:
+        bpm = await spotify_service.get_track_bpm(song.spotify_track_id)
+        if bpm is not None:
+            song.bpm = bpm
 
     song.last_accessed_at = datetime.now(timezone.utc)
     await db.commit()
